@@ -6,6 +6,13 @@
 > 影响范围：`NeeView/MainView`、`NeeView/PageLock`、`NeeView/PageFrames`、`NeeView/ViewContents`、`NeeView/Command`、`NeeView/Menu`、`NeeView/AddressBar`、`NeeView/Languages`
 > 本文中 `文件:行号` 均基于实现时实测代码，行号仅作导航锚点。实现记录见 **附录 B**。
 
+> [!IMPORTANT]
+> **后续修订（2026-11-25）**：多页锁定（行首排列参照区 + 未锁定页保底 R1/R2 + 宽度不足统一缩放）
+> 设计见 [`design/page-lock-multi.md`](page-lock-multi.md)，并已实现。
+> 本文档对应的单页固定实现为前置版本；多页版本已取代以下条款：
+> D1（B 参照位）、D4（单页互斥）、R4（按原侧分栏）、R9（替换）、
+> §2.5/§4 中「翻到锁定页时同屏显示两张」等。
+
 ---
 
 ## 0. 结论摘要（TL;DR）

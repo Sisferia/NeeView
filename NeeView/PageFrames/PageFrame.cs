@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -20,6 +20,7 @@ namespace NeeView.PageFrames
         private readonly PageTerminal _terminal;
         private readonly int _direction;
         private readonly PageFrameOrientation _stackOrientation;
+        private readonly bool _isAutoRotateEnabled;
         private readonly double _angle;
         private readonly double _scale;
         private readonly double _span;
@@ -56,14 +57,16 @@ namespace NeeView.PageFrames
         /// <param name="calculator">サイズ計算</param>
         /// <param name="stackOrientation">ページ要素を並べる方向。縦方向の場合、要素は縦に積まれる</param>
         /// <param name="isAutoRotateEnabled">自動回転を行うか</param>
-        public PageFrame(IEnumerable<PageFrameElement> sources, int direction, ContentSizeCalculator calculator, PageFrameOrientation stackOrientation, bool isAutoRotateEnabled)
+        /// <param name="frameRange">フレーム範囲。null なら要素から算出する</param>
+        public PageFrame(IEnumerable<PageFrameElement> sources, int direction, ContentSizeCalculator calculator, PageFrameOrientation stackOrientation, bool isAutoRotateEnabled, PageRange? frameRange = null)
         {
             AssertSources(sources);
             _elements = sources.ToList();
-            _range = PageRange.Marge(_elements.Select(e => e.PageRange));
-            _terminal = _elements.Select(e => e.Terminal).Aggregate((e, next) => e | next);
+            _range = frameRange ?? PageRange.Marge(_elements.Select(e => e.PageRange));
+            _terminal = _elements.Select(e => e.Terminal).Aggregate(PageTerminal.None, (e, next) => e | next);
             _direction = direction;
             _stackOrientation = stackOrientation;
+            _isAutoRotateEnabled = isAutoRotateEnabled;
 
             // auto rotate
             var rawSize = GetRawContentSize();
@@ -91,6 +94,11 @@ namespace NeeView.PageFrames
         /// ページ要素を並べる方向
         /// </summary>
         public PageFrameOrientation StackOrientation => _stackOrientation;
+
+        /// <summary>
+        /// 自動回転を行うフレームか?
+        /// </summary>
+        public bool IsAutoRotateEnabled => _isAutoRotateEnabled;
 
 
         /// <summary>
@@ -249,7 +257,8 @@ namespace NeeView.PageFrames
                 Debug.Assert(!source.PageRange.IsEmpty());
                 if (prev is not null)
                 {
-                    Debug.Assert(prev.PageRange.Next() == source.PageRange.Min, $"{nameof(sources)} must be continued.");
+                    // NOTE: ページ固定で非表示ページがある場合は連続しないことがある
+                    Debug.Assert(prev.PageRange.Min.Index < source.PageRange.Min.Index, $"{nameof(sources)} must be ordered.");
                 }
                 prev = source;
             }
@@ -278,9 +287,9 @@ namespace NeeView.PageFrames
             }
             else if (context.PageMode.IsWidePage())
             {
+                // NOTE: ページ固定で非表示ページがある場合、FrameRange は表示要素より広いことがある
                 if (_elements.Count == 1)
                 {
-                    Debug.Assert(FrameRange.IsOnePage());
                     Debug.Assert(_elements[0].PageRange.PartSize == 2);
                 }
                 else if (_elements.Count == 2)

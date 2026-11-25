@@ -1,4 +1,4 @@
-﻿using NeeView.Collections.Generic;
+using NeeView.Collections.Generic;
 using NeeView.Properties;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -173,6 +173,7 @@ namespace NeeView
                     new TreeListNode<MenuElement>(new CommandMenuElement() { CommandName = "SetPageModeTwo" }),
                     new TreeListNode<MenuElement>(new CommandMenuElement() { CommandName = "SetPageModeAdaptive" }),
                     new TreeListNode<MenuElement>(new CommandMenuElement() { CommandName = "TogglePageLock" }),
+                    new TreeListNode<MenuElement>(new CommandMenuElement() { CommandName = "UnlockAllPageLocks" }),
                     new TreeListNode<MenuElement>(new SeparatorMenuElement()),
                     new TreeListNode<MenuElement>(new CommandMenuElement() { CommandName = "ToggleIsPanorama" }),
                     new TreeListNode<MenuElement>(new SeparatorMenuElement()),

@@ -1,4 +1,4 @@
-﻿//#define LOCAL_DEBUG
+//#define LOCAL_DEBUG
 
 using CommunityToolkit.Mvvm.ComponentModel;
 using NeeLaboratory.ComponentModel;
@@ -1005,15 +1005,18 @@ namespace NeeView.PageFrames
 
             if (!AppState.Current.IsProcessingBook)
             {
-                if (_context.IsLoopPage)
-                {
-                    nextIndex = _bookContext.NormalizeIndex(nextIndex);
-                }
-                else if (!_bookContext.ContainsIndex(nextIndex))
+                // 固定ページは表示されないため、次の未固定ページまで読み飛ばす
+                var unlockedIndex = FindNextUnlockedPageIndex(nextIndex, direction.ToSign());
+                if (unlockedIndex < 0)
                 {
                     PageTerminated?.Invoke(this, new PageTerminatedEventArgs(direction.ToSign(), false));
                     return;
                 }
+                nextIndex = unlockedIndex;
+            }
+            else if (_context.IsLoopPage)
+            {
+                nextIndex = _bookContext.NormalizeIndex(nextIndex);
             }
 
             var nextPosition = new PagePosition(nextIndex, (direction == LinkedListDirection.Next ? 0 : 1));
@@ -1045,14 +1048,14 @@ namespace NeeView.PageFrames
 
             if (!AppState.Current.IsProcessingBook)
             {
-                if (_context.IsLoopPage)
-                {
-                }
-                else if (!_bookContext.ContainsIndex(pos.Index))
+                // 固定ページは表示されないため、次の未固定ページまで読み飛ばす
+                var unlockedIndex = FindNextUnlockedPageIndex(pos.Index, direction.ToSign());
+                if (unlockedIndex < 0)
                 {
                     PageTerminated?.Invoke(this, new PageTerminatedEventArgs(direction.ToSign(), false));
                     return;
                 }
+                pos = new PagePosition(unlockedIndex, (direction == LinkedListDirection.Next ? 0 : 1));
             }
 
             MoveTo(pos, direction, false, true, false);
@@ -1104,6 +1107,16 @@ namespace NeeView.PageFrames
         private PageRange GetCurrentPageRange()
         {
             return _selected.Node?.Value.FrameRange ?? PageRange.Empty;
+        }
+
+        /// <summary>
+        /// 指定方向で次の未固定ページのインデックスを求める
+        /// </summary>
+        /// <returns>未固定ページのインデックス。見つからない場合は -1</returns>
+        private int FindNextUnlockedPageIndex(int startIndex, int direction)
+        {
+            var pages = _bookContext.Pages;
+            return PageLockTools.FindNextUnlockedPageIndex(startIndex, direction, pages.Count, _context.IsLoopPage, i => NeeView.PageLock.Current.IsPageLocked(pages[i]));
         }
 
         public void MoveToNextFolder(LinkedListDirection direction, bool isShowMessage)
@@ -1723,6 +1736,34 @@ namespace NeeView.PageFrames
         /// </summary>
         public void Reset()
         {
+        }
+
+        /// <summary>
+        /// ページ固定の表示状態変更を反映する
+        /// </summary>
+        /// <remarks>
+        /// コンテナをダーティにして現在位置からフレームを再構築する。
+        /// </remarks>
+        public void RefreshPageLockFilter()
+        {
+            if (_disposedValue) return;
+
+            var page = _selected.Page;
+            var index = 0;
+            if (page is not null)
+            {
+                for (var i = 0; i < _bookContext.Pages.Count; i++)
+                {
+                    if (_bookContext.Pages[i] == page)
+                    {
+                        index = i;
+                        break;
+                    }
+                }
+            }
+
+            _containers.SetDirty(PageFrameDirtyLevel.Heavy);
+            MoveTo(new PagePosition(index, 0), LinkedListDirection.Next, false, false, true);
         }
 
         /// <summary>

@@ -1,5 +1,4 @@
-﻿using NeeView.Properties;
-using System.Windows.Data;
+using NeeView.Properties;
 
 namespace NeeView
 {
@@ -7,7 +6,7 @@ namespace NeeView
     /// ページ固定コマンド
     /// </summary>
     /// <remarks>
-    /// 表示中のページを参照表示として固定する。
+    /// 表示中のページを参照表示として固定する。固定済みのページでは解除する。
     /// メニューから実行したときは右クリックしたページ、それ以外はマウス位置のページを対象とする。
     /// </remarks>
     public class TogglePageLockCommand : CommandElement
@@ -19,11 +18,6 @@ namespace NeeView
             this.IsShowMessage = false;
 
             this.ParameterSource = new CommandParameterSource(new ToggleCommandParameter());
-        }
-
-        public override BindingBase CreateIsCheckedBinding()
-        {
-            return new Binding(nameof(NeeView.PageLock.IsLocked)) { Source = NeeView.PageLock.Current, Mode = BindingMode.OneWay };
         }
 
         public override bool CanExecute(object? sender, CommandContext e)

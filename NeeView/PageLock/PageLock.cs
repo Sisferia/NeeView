@@ -1,11 +1,15 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.ComponentModel;
 using NeeLaboratory.ComponentModel;
+using NeeView.ComponentModel;
 using NeeView.PageFrames;
 using NeeView.Properties;
 using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
@@ -15,7 +19,7 @@ namespace NeeView
     /// ページ固定（参照表示）管理
     /// </summary>
     /// <remarks>
-    /// 固定したページは主ビューとは独立した参照表示として保持する。
+    /// 固定したページは主ビューの行頭に参照区として表示する。
     /// 表示内容は固定時のスナップショットなので、ブックを切り替えても表示できる。
     /// </remarks>
     public class PageLock : ObservableObject, IDisposable
@@ -23,19 +27,21 @@ namespace NeeView
         static PageLock() => Current = new PageLock();
         public static PageLock Current { get; }
 
+        /// <summary>
+        /// 主ビューの最低長が取得できないときの比率
+        /// </summary>
+        private const double FallbackLiveLengthRate = 0.25;
 
         private readonly DisposableCollection _disposables = new();
-        private Page? _page;
-        private ImageSource? _imageSource;
-        private Size _imageSize;
-        private string _pageLabel = "";
-        private string _sourceBookPath = "";
-        private string _sourceBookLabel = "";
+        private readonly ObservableCollection<PageLockItem> _items = new();
+        private volatile Page[] _lockedPages = Array.Empty<Page>();
         private Size _viewSize;
-        private PageLockSide _side = PageLockSide.Right;
-        private double _paneWidth;
-        private bool _isLocked;
+        private PageFrameOrientation _orientation = PageFrameOrientation.Horizontal;
+        private double _stripLength;
+        private double _liveLength;
+        private double _rowScale = 1.0;
         private bool _isAvailable;
+        private bool _isFull;
         private bool _disposedValue;
 
 
@@ -50,9 +56,29 @@ namespace NeeView
 
 
         /// <summary>
+        /// 参照区のレイアウト更新要求
+        /// </summary>
+        public event EventHandler? LayoutChanged;
+
+        /// <summary>
+        /// 固定ページの増減通知
+        /// </summary>
+        public event EventHandler? LockChanged;
+
+        /// <summary>
+        /// 固定ページ一覧。固定順 = 行頭からの表示順
+        /// </summary>
+        public ObservableCollection<PageLockItem> Items => _items;
+
+        /// <summary>
+        /// 固定ページ数
+        /// </summary>
+        public int LockedCount => _items.Count;
+
+        /// <summary>
         /// ページ固定中？
         /// </summary>
-        public bool IsLocked => _isLocked;
+        public bool IsLocked => _items.Count > 0;
 
         /// <summary>
         /// ページ固定可能？
@@ -66,67 +92,61 @@ namespace NeeView
                 {
                     _isAvailable = value;
                     OnPropertyChanged();
+                    LayoutChanged?.Invoke(this, EventArgs.Empty);
                 }
             }
         }
 
         /// <summary>
-        /// 固定ページのスナップショット
+        /// 固定上限に達している？
         /// </summary>
-        public ImageSource? ImageSource => _imageSource;
-
-        /// <summary>
-        /// 固定ページの表示名
-        /// </summary>
-        public string PageLabel => _pageLabel;
-
-        /// <summary>
-        /// 固定ページのブック名
-        /// </summary>
-        public string SourceBookLabel => _sourceBookLabel;
-
-        /// <summary>
-        /// 固定ページのブック名を表示するか？
-        /// </summary>
-        public bool IsSourceBookVisible
+        public bool IsFull
         {
-            get
+            get => _isFull;
+            private set
             {
-                if (!IsLocked || string.IsNullOrEmpty(_sourceBookLabel)) return false;
-                var book = BookOperation.Current.Book;
-                return book is null || !string.Equals(book.Path, _sourceBookPath, StringComparison.Ordinal);
+                if (_isFull != value)
+                {
+                    _isFull = value;
+                    OnPropertyChanged();
+                }
             }
         }
 
         /// <summary>
-        /// 参照表示の表示状態
+        /// 参照区の長さ
         /// </summary>
-        public Visibility PaneVisibility => IsLocked && _imageSource is not null ? Visibility.Visible : Visibility.Collapsed;
+        public double StripLength => _stripLength;
 
         /// <summary>
-        /// 参照表示の位置
+        /// 主ビューの自然長
         /// </summary>
-        public HorizontalAlignment PaneAlignment => _side == PageLockSide.Left ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        public double LiveLength => _liveLength;
 
         /// <summary>
-        /// 参照表示の幅
+        /// 表示行の統一スケール
         /// </summary>
-        public double PaneWidth => _paneWidth;
+        public double RowScale => _rowScale;
 
         /// <summary>
-        /// 参照表示のために主ビューが空ける余白
+        /// 表示行の自然幅
         /// </summary>
-        public Thickness ViewMargin
-        {
-            get
-            {
-                if (PaneVisibility != Visibility.Visible) return default;
+        public double RowWidth => _orientation == PageFrameOrientation.Vertical ? _viewSize.Width : _stripLength + _liveLength;
 
-                return _side == PageLockSide.Left
-                    ? new Thickness(_paneWidth, 0.0, 0.0, 0.0)
-                    : new Thickness(0.0, 0.0, _paneWidth, 0.0);
-            }
-        }
+        /// <summary>
+        /// 表示行の自然高
+        /// </summary>
+        public double RowHeight => _orientation == PageFrameOrientation.Vertical ? _stripLength + _liveLength : _viewSize.Height;
+
+        /// <summary>
+        /// 表示行の並び方向
+        /// </summary>
+        public Orientation RowOrientation => _orientation == PageFrameOrientation.Vertical ? Orientation.Vertical : Orientation.Horizontal;
+
+        /// <summary>
+        /// 参照区のドック位置
+        /// </summary>
+        public Dock PinnedDock => _orientation == PageFrameOrientation.Vertical ? Dock.Top : Dock.Left;
 
 
         /// <summary>
@@ -138,7 +158,7 @@ namespace NeeView
             if (_viewSize == viewSize) return;
 
             _viewSize = viewSize;
-            UpdatePaneWidth();
+            UpdateLayout();
         }
 
         /// <summary>
@@ -172,31 +192,41 @@ namespace NeeView
 
             if (!IsAvailable)
             {
-                if (toggleMode == ToggleMode.Off)
+                if (toggleMode == ToggleMode.Off && IsLocked)
                 {
-                    Unlock();
+                    UnlockAll();
                 }
                 return;
             }
 
+            var viewContent = target ?? ResolveTargetViewContent();
+
             if (toggleMode == ToggleMode.Off)
             {
-                Unlock();
+                var item = viewContent is not null ? FindItem(viewContent.Page) : null;
+                if (item is not null)
+                {
+                    UnlockItem(item);
+                }
+                else
+                {
+                    UnlockAll();
+                }
                 return;
             }
 
-            var viewContent = target ?? ResolveTargetViewContent();
             if (viewContent is null)
             {
                 ShowMessage(TextResources.GetString("PageLock.CannotLock"));
                 return;
             }
 
-            if (IsLocked && IsSamePage(viewContent.Page))
+            var existing = FindItem(viewContent.Page);
+            if (existing is not null)
             {
-                if (toggleMode != ToggleMode.On)
+                if (toggleMode == ToggleMode.Toggle)
                 {
-                    Unlock();
+                    UnlockItem(existing);
                 }
                 return;
             }
@@ -212,6 +242,22 @@ namespace NeeView
             if (_disposedValue) return false;
             if (!IsAvailable) return false;
 
+            var page = viewContent.Page;
+            if (FindItem(page) is not null) return false;
+
+            if (IsFull)
+            {
+                ShowMessage(string.Format(TextResources.GetString("PageLock.Full"), PageLockTools.MaxLockCount));
+                return false;
+            }
+
+            // R1: 現在画面の最後の未固定ページは固定できない
+            if (!PageLockTools.CanLockPage(GetUnlockedPageCountInCurrentView()))
+            {
+                ShowMessage(TextResources.GetString("PageLock.KeepOneUnlocked"));
+                return false;
+            }
+
             var angle = GetPageFrameAngle(viewContent);
             var imageSource = CreateSnapshot(viewContent, angle);
             if (imageSource is null)
@@ -220,31 +266,20 @@ namespace NeeView
                 return false;
             }
 
-            var oldLabel = _isLocked ? _pageLabel : null;
+            var imageSize = GetImageSize(imageSource, viewContent, angle);
+            var pageLabel = string.Format(TextResources.GetString("PageLock.PageFormat"), page.IndexPlusOne);
             var book = BookOperation.Current.Book;
-            var page = viewContent.Page;
+            var sourceBookPath = book?.Path ?? page.BookPath;
+            var item = new PageLockItem(page, imageSource, imageSize, pageLabel, sourceBookPath, BookTools.PathToBookName(sourceBookPath));
+            item.IsSourceBookVisible = IsSourceBookVisible(sourceBookPath);
 
-            _page = page;
-            _imageSource = imageSource;
-            _imageSize = GetImageSize(imageSource, viewContent, angle);
-            _pageLabel = string.Format(TextResources.GetString("PageLock.PageFormat"), page.IndexPlusOne);
-            _sourceBookPath = book?.Path ?? page.BookPath;
-            _sourceBookLabel = BookTools.PathToBookName(_sourceBookPath);
-            _side = GetLockSide(viewContent);
-            _viewSize = GetViewSize();
-            _isLocked = true;
+            _items.Add(item);
+            UpdateCurrentPageFlags();
+            UpdateLockedPages();
+            UpdateLayout();
+            LockChanged?.Invoke(this, EventArgs.Empty);
 
-            UpdatePaneWidth();
-            NotifyStateChanged();
-
-            if (oldLabel is not null && oldLabel != _pageLabel)
-            {
-                ShowMessage(string.Format(TextResources.GetString("PageLock.Replaced"), _pageLabel, oldLabel));
-            }
-            else
-            {
-                ShowMessage(string.Format(TextResources.GetString("PageLock.Locked"), _pageLabel));
-            }
+            ShowMessage(string.Format(TextResources.GetString("PageLock.LockedCount"), pageLabel, _items.Count));
 
             return true;
         }
@@ -252,60 +287,217 @@ namespace NeeView
         /// <summary>
         /// ページ固定を解除する
         /// </summary>
-        public void Unlock()
+        public bool UnlockItem(PageLockItem item)
+        {
+            if (_disposedValue) return false;
+            if (!_items.Remove(item)) return false;
+
+            UpdateCurrentPageFlags();
+            UpdateLockedPages();
+            UpdateLayout();
+            LockChanged?.Invoke(this, EventArgs.Empty);
+
+            ShowMessage(string.Format(TextResources.GetString("PageLock.UnlockedItem"), item.PageLabel));
+            return true;
+        }
+
+        /// <summary>
+        /// すべてのページ固定を解除する
+        /// </summary>
+        public void UnlockAll()
         {
             if (_disposedValue) return;
             if (!IsLocked) return;
 
-            ClearLock();
-            ShowMessage(TextResources.GetString("PageLock.Unlocked"));
+            var count = _items.Count;
+            ClearItems();
+            ShowMessage(string.Format(TextResources.GetString("PageLock.UnlockedAll"), count));
         }
 
         /// <summary>
         /// 固定状態を破棄する (通知なし)
         /// </summary>
-        private void ClearLock()
+        public void Clear()
         {
-            _page = null;
-            _imageSource = null;
-            _imageSize = Size.Empty;
-            _pageLabel = "";
-            _sourceBookPath = "";
-            _sourceBookLabel = "";
-            _side = PageLockSide.Right;
-            _paneWidth = 0.0;
-            _isLocked = false;
+            if (_disposedValue) return;
+            if (!IsLocked) return;
 
-            NotifyStateChanged();
+            ClearItems();
         }
 
-        private void NotifyStateChanged()
+        /// <summary>
+        /// 指定ページが固定されているか?
+        /// </summary>
+        public bool IsPageLocked(Page? page)
         {
+            if (page is null) return false;
+
+            var lockedPages = _lockedPages;
+            foreach (var lockedPage in lockedPages)
+            {
+                if (lockedPage == page) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 現在固定しているページの一覧
+        /// </summary>
+        public IReadOnlyList<Page> GetLockedPages()
+        {
+            return _lockedPages;
+        }
+
+        private void UpdateLockedPages()
+        {
+            _lockedPages = _items.Select(e => e.Page).ToArray();
+        }
+
+        private void ClearItems()
+        {
+            _items.Clear();
+            UpdateCurrentPageFlags();
+            UpdateLockedPages();
+            UpdateLayout();
+            LockChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        private PageLockItem? FindItem(Page? page)
+        {
+            if (page is null) return null;
+            return _items.FirstOrDefault(e => e.IsSamePage(page));
+        }
+
+        /// <summary>
+        /// 現在の画面で未固定のページ数
+        /// </summary>
+        private int GetUnlockedPageCountInCurrentView()
+        {
+            var frameContent = MainViewComponent.Current.PageFrameBoxPresenter.View?.GetSelectedPageFrameContent();
+            if (frameContent is not null)
+            {
+                return frameContent.ViewContents.Count(e => !IsPageLocked(e.Page));
+            }
+
+            var book = BookOperation.Current.Book;
+            if (book is not null)
+            {
+                return book.Pages.Count(e => !IsPageLocked(e));
+            }
+
+            return 0;
+        }
+
+        /// <summary>
+        /// レイアウトを再計算する
+        /// </summary>
+        private void UpdateLayout()
+        {
+            if (_disposedValue) return;
+
+            _viewSize = _viewSize.IsEmpty ? (MainViewComponent.Current.MainView?.GetViewCanvasSize() ?? Size.Empty) : _viewSize;
+            _orientation = GetOrientation();
+
+            foreach (var item in _items)
+            {
+                var length = PageLockTools.GetCellLength(_viewSize, item.ImageSize, _orientation);
+                item.CellLength = length;
+                item.CellWidth = _orientation == PageFrameOrientation.Vertical ? double.NaN : length;
+                item.CellHeight = _orientation == PageFrameOrientation.Vertical ? length : double.NaN;
+            }
+
+            _stripLength = PageLockTools.GetStripLength(_items.Select(e => e.CellLength).ToList());
+
+            var canvasLength = _orientation == PageFrameOrientation.Vertical ? _viewSize.Height : _viewSize.Width;
+            var liveMinLength = GetLiveMinLength(canvasLength);
+            _liveLength = PageLockTools.GetLiveLength(_viewSize, _stripLength, liveMinLength, _orientation);
+
+            var rowLength = PageLockTools.GetRowLength(_stripLength, _liveLength);
+            _rowScale = PageLockTools.GetRowScale(_viewSize, rowLength, _orientation);
+
+            IsFull = _items.Count >= PageLockTools.MaxLockCount;
+
+            NotifyLayoutChanged();
+        }
+
+        private double GetLiveMinLength(double canvasLength)
+        {
+            var imageSize = GetLivePageImageSize();
+            var length = imageSize.IsEmpty ? 0.0 : PageLockTools.GetLiveMinLength(_viewSize, imageSize, _orientation);
+            if (length <= 0.0)
+            {
+                length = Math.Max(0.0, canvasLength * FallbackLiveLengthRate);
+            }
+            return length;
+        }
+
+        /// <summary>
+        /// 主ビューに表示するページのイメージサイズ
+        /// </summary>
+        private Size GetLivePageImageSize()
+        {
+            var frameContent = MainViewComponent.Current.PageFrameBoxPresenter.View?.GetSelectedPageFrameContent();
+            var viewContent = frameContent?.ViewContents.FirstOrDefault(e => !IsPageLocked(e.Page));
+            if (viewContent is not null)
+            {
+                var size = viewContent.Element.Size;
+                if (!size.IsEmpty) return size;
+            }
+
+            var page = BookOperation.Current.Book?.CurrentPage;
+            if (page is not null && !page.Size.IsEmpty)
+            {
+                return page.Size;
+            }
+
+            return Size.Empty;
+        }
+
+        private void NotifyLayoutChanged()
+        {
+            OnPropertyChanged(nameof(LockedCount));
             OnPropertyChanged(nameof(IsLocked));
-            OnPropertyChanged(nameof(ImageSource));
-            OnPropertyChanged(nameof(PageLabel));
-            OnPropertyChanged(nameof(SourceBookLabel));
-            OnPropertyChanged(nameof(IsSourceBookVisible));
-            OnPropertyChanged(nameof(PaneVisibility));
-            OnPropertyChanged(nameof(PaneAlignment));
-            OnPropertyChanged(nameof(PaneWidth));
-            OnPropertyChanged(nameof(ViewMargin));
+            OnPropertyChanged(nameof(IsFull));
+            OnPropertyChanged(nameof(StripLength));
+            OnPropertyChanged(nameof(LiveLength));
+            OnPropertyChanged(nameof(RowScale));
+            OnPropertyChanged(nameof(RowWidth));
+            OnPropertyChanged(nameof(RowHeight));
+            OnPropertyChanged(nameof(RowOrientation));
+            OnPropertyChanged(nameof(PinnedDock));
+
+            LayoutChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        private void UpdatePaneWidth()
+        private void UpdateCurrentPageFlags()
         {
-            var paneWidth = IsLocked ? PageLockTools.GetPaneWidth(_viewSize, _imageSize) : 0.0;
-            if (Math.Abs(_paneWidth - paneWidth) < 0.1) return;
-
-            _paneWidth = paneWidth;
-            OnPropertyChanged(nameof(PaneWidth));
-            OnPropertyChanged(nameof(ViewMargin));
+            var page = BookOperation.Current.Book?.CurrentPage;
+            foreach (var item in _items)
+            {
+                item.IsCurrentPage = item.IsSamePage(page);
+            }
         }
 
-        private Size GetViewSize()
+        private void UpdateSourceBookVisibility()
         {
-            if (!_viewSize.IsEmpty) return _viewSize;
-            return MainViewComponent.Current.MainView.GetViewCanvasSize();
+            foreach (var item in _items)
+            {
+                item.IsSourceBookVisible = IsSourceBookVisible(item.SourceBookPath);
+            }
+        }
+
+        /// <summary>
+        /// 参照区の並び方向
+        /// </summary>
+        private static PageFrameOrientation GetOrientation()
+        {
+            return Config.Current.BookSetting.PageMode.IsAdaptive() ? Config.Current.Book.Orientation : PageFrameOrientation.Horizontal;
+        }
+
+        private static bool IsSourceBookVisible(string sourceBookPath)
+        {
+            var book = BookOperation.Current.Book;
+            return book is null || !string.Equals(book.Path, sourceBookPath, StringComparison.Ordinal);
         }
 
         private static Size GetImageSize(ImageSource imageSource, ViewContent viewContent, double angle)
@@ -365,27 +557,6 @@ namespace NeeView
             }
         }
 
-        private static PageLockSide GetLockSide(ViewContent viewContent)
-        {
-            try
-            {
-                var box = MainViewComponent.Current.PageFrameBoxPresenter.View;
-                if (box is null) return PageLockSide.Right;
-
-                var rect = viewContent.TransformToAncestor(box).TransformBounds(new Rect(0.0, 0.0, viewContent.ActualWidth, viewContent.ActualHeight));
-                return PageLockTools.GetSide(rect, new Size(box.ActualWidth, box.ActualHeight));
-            }
-            catch (InvalidOperationException)
-            {
-                return PageLockSide.Right;
-            }
-        }
-
-        private bool IsSamePage(Page page)
-        {
-            return _page is not null && _page == page;
-        }
-
         private static bool CheckAvailable()
         {
             var book = BookOperation.Current.Book;
@@ -402,10 +573,12 @@ namespace NeeView
             var available = CheckAvailable();
             if (!available && IsLocked && Config.Current.BookSetting.PageMode.IsSinglePage())
             {
-                ClearLock();
-                ShowMessage(TextResources.GetString("PageLock.AutoUnlocked"));
+                var count = _items.Count;
+                ClearItems();
+                ShowMessage(string.Format(TextResources.GetString("PageLock.AutoUnlocked"), count));
             }
             IsAvailable = available;
+            UpdateLayout();
         }
 
         private void OnBookSettingChanged()
@@ -415,9 +588,10 @@ namespace NeeView
             var available = CheckAvailable();
             if (!available && IsLocked)
             {
-                ClearLock();
+                ClearItems();
             }
             IsAvailable = available;
+            UpdateLayout();
         }
 
         private void OnBookChanged(Book? book)
@@ -428,7 +602,7 @@ namespace NeeView
             {
                 if (IsLocked)
                 {
-                    ClearLock();
+                    ClearItems();
                 }
                 IsAvailable = false;
             }
@@ -437,7 +611,9 @@ namespace NeeView
                 IsAvailable = CheckAvailable();
             }
 
-            OnPropertyChanged(nameof(IsSourceBookVisible));
+            UpdateSourceBookVisibility();
+            UpdateCurrentPageFlags();
+            UpdateLayout();
         }
 
         private void ShowMessage(string? message)

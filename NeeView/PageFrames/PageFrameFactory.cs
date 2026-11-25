@@ -1,4 +1,4 @@
-﻿using NeeLaboratory.Linq;
+using NeeLaboratory.Linq;
 using NeeView.Maths;
 using System;
 using System.Collections.Generic;
@@ -81,6 +81,120 @@ namespace NeeView.PageFrames
                 return CreateAdaptivePageFrame(position, direction);
             }
 
+            return CreatePageFrameWithPageLock(position, direction);
+        }
+
+        /// <summary>
+        /// ページ固定を考慮したフレーム作成
+        /// </summary>
+        /// <remarks>
+        /// 固定ページはフレームから除外する。全ページが固定されている場合は近傍の未固定ページに読み替える。
+        /// </remarks>
+        private PageFrame? CreatePageFrameWithPageLock(PagePosition position, int direction)
+        {
+            const int MaxSearchCount = 512;
+
+            var target = position;
+            var isReversed = false;
+
+            for (var i = 0; i < MaxSearchCount; i++)
+            {
+                if (!_context.IsLoopPage && !_book.ContainsIndex(target.Index))
+                {
+                    return null;
+                }
+
+                if (!IsValidFramePosition(target, direction))
+                {
+                    target = FixFramePosition(target, direction);
+                }
+
+                var frame = CreatePageFrameCore(target, direction);
+                if (frame is null) return null;
+
+                var visibleElements = frame.Elements.Where(e => !IsPageLocked(e.Page)).ToList();
+                if (visibleElements.Count > 0)
+                {
+                    return visibleElements.Count == frame.Elements.Count ? frame : FilterPageFrame(frame, visibleElements);
+                }
+
+                // 全ページ固定: 近傍の未固定ページに読み替える
+                var next = FindNextUnlockedPosition(target, isReversed ? -direction : direction);
+                if (next is null && !isReversed)
+                {
+                    next = FindNextUnlockedPosition(target, -direction);
+                    isReversed = true;
+                }
+                if (next is null || next.Value == target)
+                {
+                    return null;
+                }
+                target = next.Value;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 固定ページを除いたフレームを生成する
+        /// </summary>
+        /// <remarks>
+        /// フレーム範囲は残った要素から再計算する。先頭/末尾の固定ページは範囲外となるため、
+        /// 現在ページは自然に次の未固定ページへ移動する。
+        /// </remarks>
+        private PageFrame FilterPageFrame(PageFrame frame, List<PageFrameElement> visibleElements)
+        {
+            return new PageFrame(visibleElements, frame.Direction, _calculator, frame.StackOrientation, frame.IsAutoRotateEnabled);
+        }
+
+        /// <summary>
+        /// 近傍の未固定ページ位置を求める
+        /// </summary>
+        private PagePosition? FindNextUnlockedPosition(PagePosition position, int direction)
+        {
+            const int MaxSearchCount = 512;
+
+            var step = direction >= 0 ? 1 : -1;
+            var index = position.Index;
+
+            for (var i = 0; i < MaxSearchCount; i++)
+            {
+                index += step;
+
+                if (_context.IsLoopPage)
+                {
+                    index = _book.NormalizeIndex(index);
+                }
+                else if (index < 0 || index >= _book.Pages.Count)
+                {
+                    return null;
+                }
+
+                var page = _book.GetPage(index, _context.IsLoopPage);
+                if (page is null)
+                {
+                    return null;
+                }
+
+                if (!IsPageLocked(page))
+                {
+                    return new PagePosition(index, step > 0 ? 0 : 1);
+                }
+            }
+
+            return null;
+        }
+
+        private static bool IsPageLocked(Page page)
+        {
+            return NeeView.PageLock.Current.IsPageLocked(page);
+        }
+
+        /// <summary>
+        /// 通常フレーム作成 (ページ固定の除外なし)
+        /// </summary>
+        private PageFrame? CreatePageFrameCore(PagePosition position, int direction)
+        {
             Debug.Assert(IsValidFramePosition(position, direction));
 
             var frame = CreatePageFrame(CreatePageSource(position, direction), direction);
@@ -232,6 +346,22 @@ namespace NeeView.PageFrames
                 return null;
             }
 
+            var frame = CreateAdaptiveFrameCore(range);
+            if (frame is not null)
+            {
+                return frame;
+            }
+
+            // 全ページ固定: 近傍の未固定ページを含むフレームに読み替える
+            var redirectRange = FindNearestUnlockedAdaptiveRange(range, direction);
+            return redirectRange is null ? null : CreateAdaptiveFrameCore(redirectRange.Value);
+        }
+
+        /// <summary>
+        /// アダプティブフレーム作成 (ページ固定を除外)
+        /// </summary>
+        private PageFrame? CreateAdaptiveFrameCore(PageRange range)
+        {
             var sources = new List<PageFrameElement>();
             for (var i = range.Min.Index; i <= range.Max.Index; i++)
             {
@@ -243,17 +373,71 @@ namespace NeeView.PageFrames
                 sources.Add(element);
             }
 
-            if (sources.Count == 0)
+            var visibleSources = sources.Where(e => !IsPageLocked(e.Page)).ToList();
+            if (visibleSources.Count == 0)
             {
                 return null;
             }
 
             // 1ページのときのみ自動回転を許可する
-            var frame = CreateMultiPageFrame(sources, _context.StackOrientation, GetAdaptiveStretchMode(_context.StackOrientation), sources.Count <= 1);
-            Debug.Assert(frame.FrameRange.Contains(position));
+            var frame = CreateMultiPageFrame(visibleSources, _context.StackOrientation, GetAdaptiveStretchMode(_context.StackOrientation), visibleSources.Count <= 1);
             frame.AssertValid(_context);
 
             return frame;
+        }
+
+        /// <summary>
+        /// 全ページ固定フレームの近傍にある未固定ページフレームを探す
+        /// </summary>
+        private PageRange? FindNearestUnlockedAdaptiveRange(PageRange origin, int direction)
+        {
+            var forwardRange = FindNextUnlockedAdaptiveRange(origin, 1);
+            var backwardRange = FindNextUnlockedAdaptiveRange(origin, -1);
+
+            return direction >= 0 ? forwardRange ?? backwardRange : backwardRange ?? forwardRange;
+        }
+
+        private PageRange? FindNextUnlockedAdaptiveRange(PageRange range, int step)
+        {
+            const int MaxSearchCount = 512;
+
+            var current = range;
+            for (var i = 0; i < MaxSearchCount; i++)
+            {
+                var nextIndex = step > 0 ? current.Max.Index + 1 : current.Min.Index - 1;
+                if (!_context.IsLoopPage && !_book.ContainsIndex(nextIndex))
+                {
+                    return null;
+                }
+
+                var next = _adaptiveMap.GetFrameRange(nextIndex);
+                if (next.IsEmpty())
+                {
+                    return null;
+                }
+
+                if (!IsAllPageLocked(next))
+                {
+                    return next;
+                }
+
+                current = next;
+            }
+
+            return null;
+        }
+
+        private bool IsAllPageLocked(PageRange range)
+        {
+            for (var i = range.Min.Index; i <= range.Max.Index; i++)
+            {
+                var page = _book.GetPage(i, _context.IsLoopPage);
+                if (page is null || !IsPageLocked(page))
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private PageFrame? CreatePageFrame(PageFrameElement? source, int direction)
@@ -393,8 +577,9 @@ namespace NeeView.PageFrames
         /// <param name="orientation">要素を並べる方向</param>
         /// <param name="stretchMode">コンテンツサイズの揃え方</param>
         /// <param name="isAutoRotateEnabled">自動回転を行うか</param>
+        /// <param name="frameRange">フレーム範囲。null なら要素から算出する</param>
         /// <returns></returns>
-        private PageFrame CreateMultiPageFrame(IReadOnlyList<PageFrameElement> sources, PageFrameOrientation orientation, WidePageStretch stretchMode, bool isAutoRotateEnabled)
+        private PageFrame CreateMultiPageFrame(IReadOnlyList<PageFrameElement> sources, PageFrameOrientation orientation, WidePageStretch stretchMode, bool isAutoRotateEnabled, PageRange? frameRange = null)
         {
             var bookDirection = _context.ReadOrder.ToSign();
 
@@ -405,7 +590,7 @@ namespace NeeView.PageFrames
                 .Select(e => scales[e.index] == e.source.Scale ? e.source : e.source with { Scale = scales[e.index] })
                 .ToList();
 
-            return new PageFrame(scaledSources, bookDirection, _calculator, orientation, isAutoRotateEnabled);
+            return new PageFrame(scaledSources, bookDirection, _calculator, orientation, isAutoRotateEnabled, frameRange);
         }
 
         /// <summary>

@@ -1,4 +1,4 @@
-﻿//#define LOCAL_DEBUG
+//#define LOCAL_DEBUG
 
 using NeeLaboratory.ComponentModel;
 using NeeLaboratory.Generators;
@@ -104,7 +104,13 @@ namespace NeeView
 
             _vm.ContextMenu.Closed += ContextMenu_Closed;
 
+            NeeView.PageLock.Current.LayoutChanged -= PageLock_LayoutChanged;
+            NeeView.PageLock.Current.LayoutChanged += PageLock_LayoutChanged;
+            NeeView.PageLock.Current.LockChanged -= PageLock_LockChanged;
+            NeeView.PageLock.Current.LockChanged += PageLock_LockChanged;
+
             NeeView.PageLock.Current.SetViewSize(GetViewCanvasSize());
+            UpdatePageLockLayout();
 
             _mainViewCursor.Initialize();
         }
@@ -358,7 +364,29 @@ namespace NeeView
 
         private void PinnedPageCloseButton_Click(object sender, RoutedEventArgs e)
         {
-            NeeView.PageLock.Current.Unlock();
+            if (sender is FrameworkElement { DataContext: PageLockItem item })
+            {
+                NeeView.PageLock.Current.UnlockItem(item);
+            }
+        }
+
+        private void PageLock_LayoutChanged(object? sender, EventArgs e)
+        {
+            UpdatePageLockLayout();
+        }
+
+        private void PageLock_LockChanged(object? sender, EventArgs e)
+        {
+            _vm?.PageFrameBoxPresenter.View?.RefreshPageLockFilter();
+        }
+
+        /// <summary>
+        /// 参照区のレイアウトを表示行に反映する
+        /// </summary>
+        private void UpdatePageLockLayout()
+        {
+            var rowScale = NeeView.PageLock.Current.RowScale;
+            this.DisplayRow.LayoutTransform = Math.Abs(rowScale - 1.0) < 0.0001 ? null : new ScaleTransform(rowScale, rowScale);
         }
 
         private void MainViewCanvas_SizeChanged(object sender, SizeChangedEventArgs e)

@@ -1,4 +1,4 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.ComponentModel;
 using NeeLaboratory.Generators;
 using NeeLaboratory.Text;
 using NeeView.Properties;
@@ -281,6 +281,7 @@ namespace NeeView
                 new SetPageModeTwoCommand(),
                 new SetPageModeAdaptiveCommand(),
                 new TogglePageLockCommand(),
+                new UnlockAllPageLocksCommand(),
                 new ToggleIsPanoramaCommand(),
                 new TogglePageOrientationCommand(),
                 new SetPageOrientationHorizontalCommand(),

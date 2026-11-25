@@ -1,4 +1,4 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using NeeView.Windows.Data;
 using System.Collections.Generic;
@@ -99,15 +99,8 @@ namespace NeeView
         [RelayCommand]
         private void TogglePageLock()
         {
-            // ボタンは状態トグルとして扱う: 固定中なら解除、そうでなければ現在ページを固定
-            if (NeeView.PageLock.Current.IsLocked)
-            {
-                NeeView.PageLock.Current.Unlock();
-            }
-            else
-            {
-                NeeView.PageLock.Current.Toggle(ToggleMode.On);
-            }
+            // ボタンは状態トグルとして扱う: 対象ページが固定中なら解除、そうでなければ固定
+            NeeView.PageLock.Current.Toggle(ToggleMode.Toggle);
         }
 
         private bool CanToggleBookmark()
