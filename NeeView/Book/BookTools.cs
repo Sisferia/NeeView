@@ -19,6 +19,11 @@ namespace NeeView
 
         public static int WidwPageAlignment(int value)
         {
+            if (!Config.Current.BookSetting.PageMode.IsWidePage())
+            {
+                return value;
+            }
+
             if (!Config.Current.Book.IsStaticWidePage)
             {
                 return value;

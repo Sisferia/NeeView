@@ -1,5 +1,6 @@
 ﻿using NeeLaboratory.Linq;
 using NeeView.Maths;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -9,12 +10,14 @@ namespace NeeView.PageFrames
     /// <summary>
     /// PageFrame生成
     /// </summary>
-    public class PageFrameFactory
+    public class PageFrameFactory : IDisposable
     {
         private readonly BookPageAccessor _book;
         private readonly ContentSizeCalculator _calculator;
         private readonly BookContext _bookContext;
         private readonly PageFrameContext _context;
+        private readonly AdaptivePageFrameMap _adaptiveMap;
+        private bool _disposedValue;
 
 
         public PageFrameFactory(PageFrameContext context, BookContext bookContext, ContentSizeCalculator calculator)
@@ -23,6 +26,16 @@ namespace NeeView.PageFrames
             _context = context;
             _book = new BookPageAccessor(_bookContext.Pages);
             _calculator = calculator;
+            _adaptiveMap = new AdaptivePageFrameMap(context, bookContext);
+        }
+
+
+        public void Dispose()
+        {
+            if (_disposedValue) return;
+            _adaptiveMap.Dispose();
+            _disposedValue = true;
+            GC.SuppressFinalize(this);
         }
 
 
@@ -48,6 +61,11 @@ namespace NeeView.PageFrames
             if (!_context.IsLoopPage && !_book.ContainsIndex(position.Index))
             {
                 return null;
+            }
+
+            if (_context.PageMode.IsAdaptive() && !_bookContext.IsMedia)
+            {
+                return CreateAdaptivePageFrame(position, direction);
             }
 
             Debug.Assert(IsValidFramePosition(position, direction));
@@ -87,9 +105,16 @@ namespace NeeView.PageFrames
             var page = _book.GetPage(position.Index);
             if (page is null) return PagePosition.Empty;
 
+            // アダプティブ表示では分割テーブル上のフレーム先頭に揃える
+            if (_context.PageMode.IsAdaptive() && !_bookContext.IsMedia)
+            {
+                var start = _adaptiveMap.GetFrameStart(position.Index);
+                return start >= 0 ? new PagePosition(start, direction < 0 ? 1 : 0) : PagePosition.Empty;
+            }
+
             // 分割可能であれば修正不要
             // NOTE: page.Content.PageDataSource にアクセスしているが、ここの処理は Debug.Assert() でしか使用されていないので許容している。
-            if (_context.PageMode == PageMode.SinglePage && _context.IsSupportedDividePage && IsLandscape(page.Content.PageDataSource))
+            if (_context.PageMode.IsSinglePage() && _context.IsSupportedDividePage && IsLandscape(page.Content.PageDataSource))
             {
                 return position;
             }
@@ -116,6 +141,12 @@ namespace NeeView.PageFrames
         /// <returns>適切であれば true</returns>
         private bool IsValidFramePosition(PagePosition position, int direction)
         {
+            if (_context.PageMode.IsAdaptive())
+            {
+                // 任意のページ位置からフレームを作成できる
+                return true;
+            }
+
             if (_context.IsLoopPage)
             {
                 position = _book.NormalizePosition(position);
@@ -149,7 +180,7 @@ namespace NeeView.PageFrames
             var range = PageRange.CreatePageRangeForOnePage(position, direction);
 
             // 分割ページ
-            if (_context.PageMode == PageMode.SinglePage && _context.IsSupportedDividePage && IsLandscape(pageDataSource))
+            if (_context.PageMode.IsSinglePage() && _context.IsSupportedDividePage && IsLandscape(pageDataSource))
             {
                 range = new PageRange(range.Top(direction), direction);
             }
@@ -167,12 +198,57 @@ namespace NeeView.PageFrames
         }
 
 
+        /// <summary>
+        /// アダプティブ表示のフレーム作成
+        /// </summary>
+        /// <remarks>
+        /// ページ位置は分割テーブルで決まるフレーム先頭に正規化される。
+        /// フレーム範囲は常に昇順で構築する。
+        /// </remarks>
+        private PageFrame? CreateAdaptivePageFrame(PagePosition position, int direction)
+        {
+            var index = position.Index;
+            if (_context.IsLoopPage && !_book.ContainsIndex(index))
+            {
+                index = _book.NormalizeIndex(index);
+            }
+
+            var range = _adaptiveMap.GetFrameRange(index);
+            if (range.IsEmpty())
+            {
+                return null;
+            }
+
+            var sources = new List<PageFrameElement>();
+            for (var i = range.Min.Index; i <= range.Max.Index; i++)
+            {
+                var page = _book.GetPage(i, _context.IsLoopPage);
+                if (page is null) break;
+
+                var pageRange = PageRange.CreatePageRangeForOnePage(new PagePosition(i, 0), 1);
+                var element = new PageFrameElement(_context, _bookContext, page, page.Content.PageDataSource, pageRange, _context.ReadOrder.ToSign(), GetTerminal(pageRange));
+                sources.Add(element);
+            }
+
+            if (sources.Count == 0)
+            {
+                return null;
+            }
+
+            // 1ページのときのみ自動回転を許可する
+            var frame = CreateMultiPageFrame(sources, _context.StackOrientation, GetAdaptiveStretchMode(_context.StackOrientation), sources.Count <= 1);
+            Debug.Assert(frame.FrameRange.Contains(position));
+            frame.AssertValid(_context);
+
+            return frame;
+        }
+
         private PageFrame? CreatePageFrame(PageFrameElement? source, int direction)
         {
             var source1 = source;
             if (source1 is null) return null;
 
-            if (_context.FramePageSize == 2 && !_bookContext.IsMedia)
+            if (_context.PageMode.IsWidePage() && !_bookContext.IsMedia)
             {
                 // TODO: SinglePageFrame 作成が分散しているのでまとめる？
                 if (_context.IsSupportedWidePage && source1.IsLandscape())
@@ -292,18 +368,43 @@ namespace NeeView.PageFrames
         /// <returns></returns>
         private PageFrame CreateWidePageFrame(PageFrameElement source1, PageFrameElement source2, int direction)
         {
-            var sources = new List<PageFrameElement>() { source1, source2 }.Direction(direction);
+            var sources = new List<PageFrameElement>() { source1, source2 }.Direction(direction).ToList();
 
+            return CreateMultiPageFrame(sources, PageFrameOrientation.Horizontal, _context.WidePageStretch, true);
+        }
+
+        /// <summary>
+        /// 複数エレメントのフレームを作成
+        /// </summary>
+        /// <param name="sources">ページ要素。常にページ順(昇順)で指定する</param>
+        /// <param name="orientation">要素を並べる方向</param>
+        /// <param name="stretchMode">コンテンツサイズの揃え方</param>
+        /// <param name="isAutoRotateEnabled">自動回転を行うか</param>
+        /// <returns></returns>
+        private PageFrame CreateMultiPageFrame(IReadOnlyList<PageFrameElement> sources, PageFrameOrientation orientation, WidePageStretch stretchMode, bool isAutoRotateEnabled)
+        {
             var bookDirection = _context.ReadOrder.ToSign();
 
             // content size alignment
-            var scales = _calculator.CalcContentScale(sources.Select(e => e.RawSize));
+            var scales = _calculator.CalcContentScale(sources.Select(e => e.RawSize), stretchMode);
             var scaledSources = sources
                 .Select((source, index) => (source, index))
-                .Select(e => scales[e.index] == e.source.Scale ? e.source : e.source with { Scale = scales[e.index] });
+                .Select(e => scales[e.index] == e.source.Scale ? e.source : e.source with { Scale = scales[e.index] })
+                .ToList();
 
-            return new PageFrame(scaledSources, bookDirection, _calculator);
+            return new PageFrame(scaledSources, bookDirection, _calculator, orientation, isAutoRotateEnabled);
+        }
+
+        /// <summary>
+        /// アダプティブ表示でのコンテンツサイズの揃え方
+        /// </summary>
+        /// <remarks>
+        /// 「同時に表示するページはすべてキャンバス高さいっぱいに揃える」のがアダプティブ表示の前提なので、
+        /// 見開き用の揃え設定には従わず、並び方向に応じた揃え方を強制する。
+        /// </remarks>
+        private static WidePageStretch GetAdaptiveStretchMode(PageFrameOrientation orientation)
+        {
+            return orientation == PageFrameOrientation.Vertical ? WidePageStretch.UniformWidth : WidePageStretch.UniformHeight;
         }
     }
-
 }

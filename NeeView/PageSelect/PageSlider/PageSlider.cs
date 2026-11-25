@@ -111,7 +111,7 @@ namespace NeeView
 
         private int GetFixedIndex(int value)
         {
-            if (Config.Current.GetFramePageSize(PageSelector.PageMode) != 2)
+            if (!PageSelector.PageMode.IsWidePage())
             {
                 return value;
             }

@@ -1484,6 +1484,7 @@ PageListPanelAccessor.Format=项目名称格式
 PageListPanelAccessor.Path=当前书籍路径
 PageMode.SinglePage=单页显示
 PageMode.WidePage=双页显示
+PageMode.Adaptive=自适应显示
 PageMoveType.Fade=褪色
 PageMoveType.Scroll=滚动
 PageNameFormat=页面列表中的项目名称格式

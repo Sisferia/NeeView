@@ -85,6 +85,7 @@ namespace NeeView.PageFrames
 
             _calculator = new ContentSizeCalculator(_context);
             var frameFactory = new PageFrameFactory(_context, _bookContext, _calculator);
+            _disposables.Add(frameFactory);
             _viewSourceMap = new ViewSourceMap(_bookContext.BookMemoryService);
             _disposables.Add(_viewSourceMap);
             var elementScaleFactory = new PageFrameElementScaleFactory(_context, _transformMap, loupeContext);
@@ -626,7 +627,6 @@ namespace NeeView.PageFrames
                     break;
 
                 case nameof(Context.PageMode):
-                case nameof(Context.FramePageSize):
                 case nameof(Context.IsPanorama):
                     MoveToFixPosition();
                     UpdateContainers(PageFrameDirtyLevel.Heavy, TransformMask.Point, true, true);
@@ -978,7 +978,8 @@ namespace NeeView.PageFrames
             if (_disposedValue) return;
             if (!_bookContext.IsEnabled) return;
 
-            if (_context.FramePageSize == 1)
+            // 単ページ表示、及びアダプティブ表示ではフレーム単位で移動する
+            if (_context.PageMode.IsSinglePage() || _context.PageMode.IsAdaptive())
             {
                 MoveToNextFrame(direction);
                 return;

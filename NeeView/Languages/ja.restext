@@ -1484,6 +1484,7 @@ PageListPanelAccessor.Format=項目名フォーマット
 PageListPanelAccessor.Path=現在のブックのパス
 PageMode.SinglePage=1 ページ表示
 PageMode.WidePage=2 ページ表示
+PageMode.Adaptive=アダプティブ表示
 PageMoveType.Fade=フェード
 PageMoveType.Scroll=スクロール
 PageNameFormat=ページリストでの項目名フォーマット

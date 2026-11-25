@@ -121,6 +121,10 @@
                                         <Setter Property="Source" Value="{StaticResource ic_looks_two_24px}"/>
                                         <Setter Property="ToolTip" Value="{properties:TextBinding PageMode.WidePage}"/>
                                     </DataTrigger>
+                                    <DataTrigger Binding="{Binding BookSetting.PageMode}"  Value="Adaptive">
+                                        <Setter Property="Source" Value="{StaticResource ic_view_week_24px}"/>
+                                        <Setter Property="ToolTip" Value="{properties:TextBinding PageMode.Adaptive}"/>
+                                    </DataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </Image.Style>

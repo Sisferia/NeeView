@@ -279,6 +279,7 @@ namespace NeeView
                 new TogglePageModeReverseCommand(),
                 new SetPageModeOneCommand(),
                 new SetPageModeTwoCommand(),
+                new SetPageModeAdaptiveCommand(),
                 new ToggleIsPanoramaCommand(),
                 new TogglePageOrientationCommand(),
                 new SetPageOrientationHorizontalCommand(),

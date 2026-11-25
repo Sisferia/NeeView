@@ -87,10 +87,11 @@ namespace NeeView.PageFrames
         {
             if (node.Value.Content is not PageFrameContent item) return true;
 
-            var allowPartPage = _context.PageMode == PageMode.SinglePage && _context.IsSupportedDividePage;
+            var allowPartPage = _context.PageMode.IsSinglePage() && _context.IsSupportedDividePage;
             var partSize = item.FrameRange.PartSize;
 
-            var result = allowPartPage || partSize == 2;
+            // NOTE: 1ページ = 2パーツなので、ページ全体で構成されたフレームは偶数パーツになる
+            var result = allowPartPage || (partSize >= 2 && partSize % 2 == 0);
             //Debug.Assert(result);
             return result;
         }

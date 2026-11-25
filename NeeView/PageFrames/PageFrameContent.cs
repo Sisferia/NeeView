@@ -232,6 +232,14 @@ namespace NeeView.PageFrames
 
         private void NextPage_SizeChanged(object? sender, EventArgs e)
         {
+            // アダプティブ表示では、次のページのサイズ次第でフレーム構成が変わる
+            if (_context.PageMode.IsAdaptive())
+            {
+                LocalDebug.WriteLine($"NextPage.SizeChanged: Call(Adaptive), {((Page?)sender)?.Size}");
+                RaiseContentSizeChanged();
+                return;
+            }
+
             // ページ補填の余地あり？
             if (IsWidePageFrameDirty())
             {
@@ -258,6 +266,12 @@ namespace NeeView.PageFrames
 
         private bool IsPageFrameDirty()
         {
+            // 並び方向が変わっている可能性
+            if (_pageFrame.StackOrientation != _context.StackOrientation)
+            {
+                return true;
+            }
+
             // ページサイズが変更されている可能性
             if (_pageFrame.Elements.Any(e => e.PageSize != e.Page.Size))
             {
@@ -272,7 +286,7 @@ namespace NeeView.PageFrames
             if (_nextPage is null) return false;
 
             // 2ページモードで1ページだけ表示しているときに、次のページによって2ページ表示になる可能性
-            if (_context.PageMode == PageMode.WidePage && _context.IsSupportedWidePage
+            if (_context.PageMode.IsWidePage() && _context.IsSupportedWidePage
                 && _pageFrame.IsSinglePortraitElement()
                 && AspectRatioTools.IsPortrait(_nextPage.Size))
             {
@@ -459,18 +473,32 @@ namespace NeeView.PageFrames
 
         private void UpdateElementLayout()
         {
-            var x = _pageFrame.StretchedSize.Width * -0.5;
-            foreach (var content in _viewContents.Direction(_pageFrame.Direction))
+            if (_pageFrame.StackOrientation == PageFrameOrientation.Vertical)
             {
-                var y = _context.WidePageVerticalAlignment switch
+                // 縦に積む
+                var y = _pageFrame.StretchedSize.Height * -0.5;
+                foreach (var content in _viewContents.Direction(_pageFrame.Direction))
                 {
-                    WidePageVerticalAlignment.Top => _pageFrame.StretchedSize.Height * -0.5,
-                    WidePageVerticalAlignment.Bottom => _pageFrame.StretchedSize.Height * 0.5 - content.Height,
-                    _ => content.Height * -0.5,
-                };
-                Canvas.SetLeft(content, x);
-                Canvas.SetTop(content, y);
-                x += content.Width + _pageFrame.Span;
+                    Canvas.SetLeft(content, content.Width * -0.5);
+                    Canvas.SetTop(content, y);
+                    y += content.Height + _pageFrame.Span;
+                }
+            }
+            else
+            {
+                var x = _pageFrame.StretchedSize.Width * -0.5;
+                foreach (var content in _viewContents.Direction(_pageFrame.Direction))
+                {
+                    var y = _context.WidePageVerticalAlignment switch
+                    {
+                        WidePageVerticalAlignment.Top => _pageFrame.StretchedSize.Height * -0.5,
+                        WidePageVerticalAlignment.Bottom => _pageFrame.StretchedSize.Height * 0.5 - content.Height,
+                        _ => content.Height * -0.5,
+                    };
+                    Canvas.SetLeft(content, x);
+                    Canvas.SetTop(content, y);
+                    x += content.Width + _pageFrame.Span;
+                }
             }
         }
 

@@ -1492,6 +1492,7 @@ PageListPanelAccessor.Format=Формат имени элемента
 PageListPanelAccessor.Path=Текущий путь к книге
 PageMode.SinglePage=Одна страница
 PageMode.WidePage=Две страницы
+PageMode.Adaptive=Адаптивное отображение
 PageMoveType.Fade=
 PageMoveType.Scroll=
 PageNameFormat=Формат имени элемента в списке страниц

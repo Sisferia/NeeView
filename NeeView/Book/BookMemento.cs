@@ -206,6 +206,10 @@ namespace NeeView
                         memento.PageMode = PageMode.WidePage;
                         break;
 
+                    case nameof(PageMode.Adaptive):
+                        memento.PageMode = PageMode.Adaptive;
+                        break;
+
                     case nameof(PageReadOrder.RightToLeft):
                         memento.BookReadOrder = PageReadOrder.RightToLeft;
                         break;

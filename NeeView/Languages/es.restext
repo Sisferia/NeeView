@@ -1492,6 +1492,7 @@ PageListPanelAccessor.Format=Formato nombre elemento
 PageListPanelAccessor.Path=Ruta libro actual
 PageMode.SinglePage=Una página
 PageMode.WidePage=Dos páginas
+PageMode.Adaptive=Visualización adaptativa
 PageMoveType.Fade=
 PageMoveType.Scroll=
 PageNameFormat=Formato nombre elemento en PageList

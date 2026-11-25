@@ -79,7 +79,7 @@ namespace NeeView.PageFrames
         public double DividePageRate => _config.Book.DividePageRate;
 
         // TODO: 更新イベントが余計に発生している？Propertyパターンにして抑制させることも可能(優先度低)
-        public double ContentsSpace => FramePageSize == 2 ? _config.Book.ContentsSpace : 0.0;
+        public double ContentsSpace => PageMode.IsMultiPageFrame() ? _config.Book.ContentsSpace : 0.0;
         public PageStretchMode StretchMode => _config.Book.IsPanorama && _config.View.StretchMode == PageStretchMode.Uniform
             ? _config.Book.Orientation == PageFrameOrientation.Horizontal ? PageStretchMode.UniformToVertical : PageStretchMode.UniformToHorizontal
             : _config.View.StretchMode;
@@ -114,12 +114,25 @@ namespace NeeView.PageFrames
         public bool ShouldScaleStretchTracking => IsScaleStretchTracking || ForceScaleStretchTracking.IsLocked;
 
         public PageMode PageMode => _bookSetting.PageMode;
-        public int FramePageSize => _config.GetFramePageSize(_bookSetting.PageMode);
+
+        /// <summary>
+        /// アダプティブ表示での1フレームの最大ページ数
+        /// </summary>
+        /// <remarks>
+        /// 極端に細長いページで1画面に大量のページが並ぶのを防ぐための上限。UIには公開しない。
+        /// </remarks>
+        public const int AdaptiveMaxPageCount = 8;
+
+        /// <summary>
+        /// フレーム内のページを並べる方向。アダプティブ表示のみ FrameOrientation に追従する。
+        /// </summary>
+        public PageFrameOrientation StackOrientation => PageMode.IsAdaptive() ? FrameOrientation : PageFrameOrientation.Horizontal;
+
         public PageReadOrder ReadOrder => _bookSetting.BookReadOrder;
-        public bool IsSupportedDividePage => _bookSetting.IsSupportedDividePage && _bookSetting.PageMode == PageMode.SinglePage;
-        public bool IsSupportedWidePage => _bookSetting.IsSupportedWidePage && FramePageSize == 2;
-        public bool IsSupportedSingleFirstPage => _bookSetting.IsSupportedSingleFirstPage && FramePageSize == 2;
-        public bool IsSupportedSingleLastPage => _bookSetting.IsSupportedSingleLastPage && FramePageSize == 2;
+        public bool IsSupportedDividePage => _bookSetting.IsSupportedDividePage && _bookSetting.PageMode.IsSinglePage();
+        public bool IsSupportedWidePage => _bookSetting.IsSupportedWidePage && _bookSetting.PageMode.IsWidePage();
+        public bool IsSupportedSingleFirstPage => _bookSetting.IsSupportedSingleFirstPage && _bookSetting.PageMode.IsWidePage();
+        public bool IsSupportedSingleLastPage => _bookSetting.IsSupportedSingleLastPage && _bookSetting.PageMode.IsWidePage();
         public bool IsRecursiveFolder => _bookSetting.IsRecursiveFolder;
         public AutoRotateType AutoRotate => _bookSetting.AutoRotate;
         public AutoRotatePolicy AutoRotatePolicy => _config.View.AutoRotatePolicy;
@@ -207,6 +220,7 @@ namespace NeeView.PageFrames
 
                 case nameof(BookConfig.Orientation):
                     OnPropertyChanged(nameof(FrameOrientation));
+                    OnPropertyChanged(nameof(StackOrientation));
                     OnPropertyChanged(nameof(StretchMode));
                     break;
 
@@ -341,11 +355,11 @@ namespace NeeView.PageFrames
                     OnPropertyChanged(nameof(PageMode));
                     OnPropertyChanged(nameof(StretchMode));
                     OnPropertyChanged(nameof(ContentsSpace));
-                    OnPropertyChanged(nameof(FramePageSize));
-                    //RaisePropertyChanged(nameof(IsSupportedDividePage));
-                    //RaisePropertyChanged(nameof(IsSupportedWidePage));
-                    //RaisePropertyChanged(nameof(IsSupportedSingleFirstPage));
-                    //RaisePropertyChanged(nameof(IsSupportedSingleLastPage));
+                    OnPropertyChanged(nameof(StackOrientation));
+                    OnPropertyChanged(nameof(IsSupportedDividePage));
+                    OnPropertyChanged(nameof(IsSupportedWidePage));
+                    OnPropertyChanged(nameof(IsSupportedSingleFirstPage));
+                    OnPropertyChanged(nameof(IsSupportedSingleLastPage));
                     break;
 
                 case nameof(BookSettingConfig.BookReadOrder):

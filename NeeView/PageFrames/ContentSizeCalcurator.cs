@@ -152,7 +152,21 @@ namespace NeeView.PageFrames
         /// <returns></returns>
         public double CalcFrameStretchScale(Size size, double span, RotateTransform rotate, Size canvasSize)
         {
-            return CalcStretchScale(StretchMode, GetFillScaleWithSpan(size, span, rotate.Angle, canvasSize), size, canvasSize);
+            return CalcFrameStretchScale(size, span, rotate, canvasSize, PageFrameOrientation.Horizontal);
+        }
+
+        /// <summary>
+        /// ストレッチスケールを求める。PageFrame用
+        /// </summary>
+        /// <param name="size"></param>
+        /// <param name="span">要素間の距離。並び方向にのみ作用する</param>
+        /// <param name="rotate"></param>
+        /// <param name="canvasSize"></param>
+        /// <param name="orientation">要素を並べる方向</param>
+        /// <returns></returns>
+        public double CalcFrameStretchScale(Size size, double span, RotateTransform rotate, Size canvasSize, PageFrameOrientation orientation)
+        {
+            return CalcStretchScale(StretchMode, GetFillScaleWithSpan(size, span, rotate.Angle, canvasSize, orientation), size, canvasSize);
         }
 
 
@@ -202,24 +216,41 @@ namespace NeeView.PageFrames
         /// <param name="span">PageContent 間の距離。スケールに影響されない固定値</param>
         /// <param name="angle">自動回転角度。90度単位のみ対応</param>
         /// <param name="canvasSize"></param>
+        /// <param name="orientation">要素を並べる方向。span はこの方向にのみ作用する</param>
         /// <returns>回転前に適用されるScale</returns>
-        private Vector GetFillScaleWithSpan(Size size, double span, double angle, Size canvasSize)
+        private Vector GetFillScaleWithSpan(Size size, double span, double angle, Size canvasSize, PageFrameOrientation orientation)
         {
             Debug.Assert(Math.Abs(angle % 90) < 1.0, "Only 90-degree units are supported.");
 
             if (size.Width <= 0.0 || size.Height <= 0.0) return new Vector(1.0, 1.0);
+
             var radian = Math.PI * angle / 180.0;
             var isTranspose = Math.Abs(Math.Sin(radian)) > 0.5;
+
+            // 並び方向のspanは、回転後のキャンバス上の対応する軸から差し引く
+            var availableWidth = canvasSize.Width;
+            var availableHeight = canvasSize.Height;
+            if (orientation == PageFrameOrientation.Horizontal)
+            {
+                if (isTranspose) availableHeight -= span;
+                else availableWidth -= span;
+            }
+            else
+            {
+                if (isTranspose) availableWidth -= span;
+                else availableHeight -= span;
+            }
+
             if (isTranspose)
             {
-                var scaleY = AllowScale((canvasSize.Height - span) / size.Width);
-                var scaleX = AllowScale(canvasSize.Width / size.Height);
+                var scaleY = AllowScale(availableHeight / size.Width);
+                var scaleX = AllowScale(availableWidth / size.Height);
                 return new Vector(scaleX, scaleY);
             }
             else
             {
-                var scaleX = AllowScale((canvasSize.Width - span) / size.Width);
-                var scaleY = AllowScale(canvasSize.Height / size.Height);
+                var scaleX = AllowScale(availableWidth / size.Width);
+                var scaleY = AllowScale(availableHeight / size.Height);
                 return new Vector(scaleX, scaleY);
             }
         }
@@ -239,6 +270,16 @@ namespace NeeView.PageFrames
 
         public double[] CalcContentScale(IEnumerable<Size> contents)
         {
+            return CalcContentScale(contents, WidePageStretch);
+        }
+
+        /// <summary>
+        /// コンテンツサイズを揃えるスケールを求める
+        /// </summary>
+        /// <param name="contents">コンテンツサイズ</param>
+        /// <param name="stretchMode">揃え方</param>
+        public double[] CalcContentScale(IEnumerable<Size> contents, WidePageStretch stretchMode)
+        {
             if (!contents.Any())
             {
                 return Array.Empty<double>();
@@ -254,12 +295,12 @@ namespace NeeView.PageFrames
                 return contents.Select(e => 1.0).ToArray();
             }
 
-            return WidePageStretch switch
+            return stretchMode switch
             {
                 WidePageStretch.None => contents.Select(e => 1.0).ToArray(),
                 WidePageStretch.UniformHeight => CalcUniformHeightScale(contents),
                 WidePageStretch.UniformWidth => CalcUniformWidthScale(contents),
-                _ => throw new InvalidOperationException($"WidePageAlignment.{WidePageStretch} is not supported."),
+                _ => throw new InvalidOperationException($"WidePageAlignment.{stretchMode} is not supported."),
             };
         }
 

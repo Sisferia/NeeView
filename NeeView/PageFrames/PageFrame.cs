@@ -19,6 +19,7 @@ namespace NeeView.PageFrames
         private readonly PageRange _range;
         private readonly PageTerminal _terminal;
         private readonly int _direction;
+        private readonly PageFrameOrientation _stackOrientation;
         private readonly double _angle;
         private readonly double _scale;
         private readonly double _span;
@@ -41,25 +42,39 @@ namespace NeeView.PageFrames
         /// </summary>
         /// <param name="sources">フレームを構成するページ要素</param>
         /// <param name="direction">ページ要素の並び順</param>
-        /// <param name="autorotate">自動回転フラグ。Defaultでない場合に自動回転するかを判断する</param>
+        /// <param name="calculator">サイズ計算</param>
         public PageFrame(IEnumerable<PageFrameElement> sources, int direction, ContentSizeCalculator calculator)
+            : this(sources, direction, calculator, PageFrameOrientation.Horizontal, true)
+        {
+        }
+
+        /// <summary>
+        /// PageFrame コンストラクタ
+        /// </summary>
+        /// <param name="sources">フレームを構成するページ要素</param>
+        /// <param name="direction">ページ要素の並び順</param>
+        /// <param name="calculator">サイズ計算</param>
+        /// <param name="stackOrientation">ページ要素を並べる方向。縦方向の場合、要素は縦に積まれる</param>
+        /// <param name="isAutoRotateEnabled">自動回転を行うか</param>
+        public PageFrame(IEnumerable<PageFrameElement> sources, int direction, ContentSizeCalculator calculator, PageFrameOrientation stackOrientation, bool isAutoRotateEnabled)
         {
             AssertSources(sources);
             _elements = sources.ToList();
             _range = PageRange.Marge(_elements.Select(e => e.PageRange));
             _terminal = _elements.Select(e => e.Terminal).Aggregate((e, next) => e | next);
             _direction = direction;
+            _stackOrientation = stackOrientation;
 
             // auto rotate
             var rawSize = GetRawContentSize();
             var isFileContent = _elements.Any(e => e.Page.Content.IsFileContent);
-            _angle = calculator.CalcAutoRotate(rawSize, isFileContent);
+            _angle = isAutoRotateEnabled ? calculator.CalcAutoRotate(rawSize, isFileContent) : 0.0;
             Debug.Assert(_angle == 0.0 || _angle == 90.0 || _angle == -90.0);
 
             // stretch
             _span = calculator.ContentsSpace;
             _totalSpan = Math.Max(0.0, (_elements.Count - 1) * _span);
-            _scale = calculator.CalcFrameStretchScale(rawSize, _totalSpan, RotateTransform);
+            _scale = calculator.CalcFrameStretchScale(rawSize, _totalSpan, RotateTransform, calculator.CanvasSize, _stackOrientation);
 
             // frame size
             _stretchedSize = GetStretchedContentSize(calculator);
@@ -71,6 +86,12 @@ namespace NeeView.PageFrames
         public PageRange FrameRange => _range;
         public PageTerminal Terminal => _terminal;
         public int Direction => _direction;
+
+        /// <summary>
+        /// ページ要素を並べる方向
+        /// </summary>
+        public PageFrameOrientation StackOrientation => _stackOrientation;
+
 
         /// <summary>
         /// 自動回転角度
@@ -139,17 +160,37 @@ namespace NeeView.PageFrames
         public Size GetRawContentSize()
         {
             if (!_elements.Any()) return new Size(0.0, 0.0);
-            var width = Math.Max(_elements.Sum(e => e.Width), 0.0);
-            var height = Math.Max(_elements.Any() ? _elements.Max(e => e.Height) : 0.0, 0.0);
-            return new Size(width, height);
+
+            if (_stackOrientation == PageFrameOrientation.Vertical)
+            {
+                var width = Math.Max(_elements.Max(e => e.Width), 0.0);
+                var height = Math.Max(_elements.Sum(e => e.Height), 0.0);
+                return new Size(width, height);
+            }
+            else
+            {
+                var width = Math.Max(_elements.Sum(e => e.Width), 0.0);
+                var height = Math.Max(_elements.Any() ? _elements.Max(e => e.Height) : 0.0, 0.0);
+                return new Size(width, height);
+            }
         }
 
         private Size GetStretchedContentSize(ContentSizeCalculator calculator)
         {
             var size = GetRawContentSize();
-            var width = Math.Max(size.Width * _scale + _totalSpan, 0.0);
-            var height = Math.Max(size.Height * _scale, 0.0);
-            return new Size(width, height);
+
+            if (_stackOrientation == PageFrameOrientation.Vertical)
+            {
+                var width = Math.Max(size.Width * _scale, 0.0);
+                var height = Math.Max(size.Height * _scale + _totalSpan, 0.0);
+                return new Size(width, height);
+            }
+            else
+            {
+                var width = Math.Max(size.Width * _scale + _totalSpan, 0.0);
+                var height = Math.Max(size.Height * _scale, 0.0);
+                return new Size(width, height);
+            }
         }
 
         private Size GetContentSize(ContentSizeCalculator calculator)
@@ -222,7 +263,20 @@ namespace NeeView.PageFrames
         [Conditional("DEBUG")]
         public void AssertValid(PageFrameContext context)
         {
-            if (context.FramePageSize == 2)
+            Debug.Assert(_elements.Count >= 1);
+            Debug.Assert(_elements.All(e => !e.PageRange.IsEmpty()));
+
+            if (context.PageMode.IsAdaptive())
+            {
+                // アダプティブ表示: 1..N ページ。各要素はページ全体
+                Debug.Assert(_elements.Count <= PageFrameContext.AdaptiveMaxPageCount);
+                foreach (var element in _elements)
+                {
+                    Debug.Assert(element.PageRange.IsOnePage());
+                    Debug.Assert(element.PageRange.PartSize == 2);
+                }
+            }
+            else if (context.PageMode.IsWidePage())
             {
                 if (_elements.Count == 1)
                 {
@@ -296,6 +350,7 @@ namespace NeeView.PageFrames
                _range.Equals(frame._range) &&
                _terminal == frame._terminal &&
                _direction == frame._direction &&
+               _stackOrientation == frame._stackOrientation &&
                _angle == frame._angle &&
                _scale == frame._scale &&
                _span == frame._span &&

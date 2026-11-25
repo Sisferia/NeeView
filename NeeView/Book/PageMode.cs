@@ -11,6 +11,9 @@ namespace NeeView
 
         [AliasName]
         WidePage,
+
+        [AliasName]
+        Adaptive,
     }
 
 
@@ -33,13 +36,40 @@ namespace NeeView
         public static PageMode Validate(this PageMode mode)
         {
             if (mode < PageMode.SinglePage) return PageMode.SinglePage;
-            if (mode > PageMode.WidePage) return PageMode.WidePage;
+            if (mode > PageMode.Adaptive) return PageMode.Adaptive;
             return mode;
         }
 
-        //public static bool IsStaticFrame(this PageMode mode)
-        //{
-        //    return mode != PageMode.WidePage;
-        //}
+        /// <summary>
+        /// 単ページ表示
+        /// </summary>
+        public static bool IsSinglePage(this PageMode mode)
+        {
+            return mode == PageMode.SinglePage;
+        }
+
+        /// <summary>
+        /// 見開き表示
+        /// </summary>
+        public static bool IsWidePage(this PageMode mode)
+        {
+            return mode == PageMode.WidePage;
+        }
+
+        /// <summary>
+        /// アダプティブ表示
+        /// </summary>
+        public static bool IsAdaptive(this PageMode mode)
+        {
+            return mode == PageMode.Adaptive;
+        }
+
+        /// <summary>
+        /// フレーム内に複数ページを並べるモード？
+        /// </summary>
+        public static bool IsMultiPageFrame(this PageMode mode)
+        {
+            return mode != PageMode.SinglePage;
+        }
     }
 }

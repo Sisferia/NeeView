@@ -1484,6 +1484,7 @@ PageListPanelAccessor.Format=項目名稱格式
 PageListPanelAccessor.Path=目前書本的路徑
 PageMode.SinglePage=1 頁面顯示
 PageMode.WidePage=2 頁面顯示
+PageMode.Adaptive=自適應顯示
 PageMoveType.Fade=
 PageMoveType.Scroll=
 PageNameFormat=在列面列表的項目名稱格式
