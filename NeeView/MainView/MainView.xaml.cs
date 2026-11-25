@@ -102,6 +102,10 @@ namespace NeeView
             _vm.ViewComponent.OpenContextMenuRequest += (s, e) => OpenContextMenu();
             _vm.ViewComponent.FocusMainViewRequest += (s, e) => FocusMainView();
 
+            _vm.ContextMenu.Closed += ContextMenu_Closed;
+
+            NeeView.PageLock.Current.SetViewSize(GetViewCanvasSize());
+
             _mainViewCursor.Initialize();
         }
 
@@ -219,7 +223,7 @@ namespace NeeView
 
             try
             {
-                var canvasSize = new Size(this.MainViewCanvas.ActualWidth, this.MainViewCanvas.ActualHeight);
+                var canvasSize = new Size(this.View.ActualWidth, this.View.ActualHeight);
                 var content = GetSelectedPageFrameContent();
                 if (content is null) return;
                 MainViewViewModel.StretchWindow(window, canvasSize, content);
@@ -244,7 +248,7 @@ namespace NeeView
             try
             {
                 using var key = PageFrameProfile.ReferenceSizeLocker.Lock();
-                var canvasSize = new Size(this.MainViewCanvas.ActualWidth, this.MainViewCanvas.ActualHeight);
+                var canvasSize = new Size(this.View.ActualWidth, this.View.ActualHeight);
                 var content = GetSelectedPageFrameContent();
                 if (content is null) return;
                 MainViewViewModel.StretchReferenceWindow(window, canvasSize, content);
@@ -287,10 +291,47 @@ namespace NeeView
 
         #region ContextMenu
 
+        private ViewContent? _contextMenuTargetViewContent;
+
+        /// <summary>
+        /// マウス位置のページを取得する
+        /// </summary>
+        public ViewContent? GetViewContentAtMousePosition()
+        {
+            var box = _vm?.PageFrameBoxPresenter.View;
+            if (box is null) return null;
+
+            var point = Mouse.GetPosition(box);
+            if (point.X < 0.0 || point.Y < 0.0 || point.X >= box.ActualWidth || point.Y >= box.ActualHeight) return null;
+
+            return box.GetViewContentAt(point);
+        }
+
+        /// <summary>
+        /// コンテキストメニューで選択されたページを取得する
+        /// </summary>
+        /// <remarks>
+        /// コンテキストメニューが開いていない場合は null
+        /// </remarks>
+        public ViewContent? GetContextMenuTargetViewContent()
+        {
+            if (_vm?.ContextMenu.IsOpen != true) return null;
+            return _contextMenuTargetViewContent;
+        }
+
+        /// <summary>
+        /// 参照表示の位置計算用の表示領域サイズを取得する
+        /// </summary>
+        public Size GetViewCanvasSize()
+        {
+            return new Size(this.MainViewCanvas.ActualWidth, this.MainViewCanvas.ActualHeight);
+        }
+
         public void OpenContextMenu()
         {
             if (this.MainViewPanel.ContextMenu != null)
             {
+                UpdateContextMenuTarget();
                 _vm?.UpdateContextMenu();
                 this.MainViewPanel.ContextMenu.DataContext = _vm;
                 this.MainViewPanel.ContextMenu.PlacementTarget = this.MainViewPanel;
@@ -301,7 +342,28 @@ namespace NeeView
 
         private void MainViewPanel_ContextMenuOpening(object sender, ContextMenuEventArgs e)
         {
+            UpdateContextMenuTarget();
             _vm?.UpdateContextMenu();
+        }
+
+        private void UpdateContextMenuTarget()
+        {
+            _contextMenuTargetViewContent = GetViewContentAtMousePosition();
+        }
+
+        private void ContextMenu_Closed(object? sender, RoutedEventArgs e)
+        {
+            _contextMenuTargetViewContent = null;
+        }
+
+        private void PinnedPageCloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            NeeView.PageLock.Current.Unlock();
+        }
+
+        private void MainViewCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            NeeView.PageLock.Current.SetViewSize(e.NewSize);
         }
 
         #endregion ContextMenu

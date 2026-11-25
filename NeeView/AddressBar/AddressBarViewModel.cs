@@ -42,6 +42,11 @@ namespace NeeView
 
         public bool IsLoading => _isLoading.Value;
 
+        /// <summary>
+        /// ページ固定の参照表示
+        /// </summary>
+        public PageLock PageLock => NeeView.PageLock.Current;
+
         public Dictionary<string, RoutedUICommand> BookCommands
         {
             get { return RoutedCommandTable.Current.Commands; }
@@ -89,6 +94,20 @@ namespace NeeView
         private void TogglePageMode()
         {
             BookSettings.Current.TogglePageMode(+1, true);
+        }
+
+        [RelayCommand]
+        private void TogglePageLock()
+        {
+            // ボタンは状態トグルとして扱う: 固定中なら解除、そうでなければ現在ページを固定
+            if (NeeView.PageLock.Current.IsLocked)
+            {
+                NeeView.PageLock.Current.Unlock();
+            }
+            else
+            {
+                NeeView.PageLock.Current.Toggle(ToggleMode.On);
+            }
         }
 
         private bool CanToggleBookmark()

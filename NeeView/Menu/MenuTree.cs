@@ -172,6 +172,7 @@ namespace NeeView
                     new TreeListNode<MenuElement>(new CommandMenuElement() { CommandName = "SetPageModeOne" }),
                     new TreeListNode<MenuElement>(new CommandMenuElement() { CommandName = "SetPageModeTwo" }),
                     new TreeListNode<MenuElement>(new CommandMenuElement() { CommandName = "SetPageModeAdaptive" }),
+                    new TreeListNode<MenuElement>(new CommandMenuElement() { CommandName = "TogglePageLock" }),
                     new TreeListNode<MenuElement>(new SeparatorMenuElement()),
                     new TreeListNode<MenuElement>(new CommandMenuElement() { CommandName = "ToggleIsPanorama" }),
                     new TreeListNode<MenuElement>(new SeparatorMenuElement()),

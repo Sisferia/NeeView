@@ -60,6 +60,23 @@
 
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" UseLayoutRounding="True">
 
+                <Button x:Name="PageLockButton" Style="{StaticResource AddressIconButton}" Command="{Binding TogglePageLockCommand}" TabIndex="19"
+                        Visibility="{Binding PageLock.IsAvailable, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <Image>
+                        <Image.Style>
+                            <Style TargetType="Image">
+                                <Setter Property="Source" Value="{StaticResource ic_lock_open_24px}"/>
+                                <Setter Property="ToolTip" Value="{properties:TextBinding PageLock.ToolTip}"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding PageLock.IsLocked}" Value="True">
+                                        <Setter Property="Source" Value="{StaticResource ic_lock_24px}"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Image.Style>
+                    </Image>
+                </Button>
+
                 <Button Style="{StaticResource AddressIconButton}" Command="{Binding BookCommands[ToggleSlideShow]}" TabIndex="20">
                     <Image>
                         <Image.Style>

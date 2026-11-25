@@ -75,6 +75,11 @@ namespace NeeView
 
         public TouchInput TouchInput => _viewComponent.TouchInput;
 
+        /// <summary>
+        /// ページ固定の参照表示
+        /// </summary>
+        public PageLock PageLock => NeeView.PageLock.Current;
+
         public Thickness MainViewMargin => new(Config.Current.View.MainViewMargin);
 
         public ContextMenu ContextMenu => _contextMenu;

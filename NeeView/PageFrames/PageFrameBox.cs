@@ -1735,6 +1735,73 @@ namespace NeeView.PageFrames
         }
 
         /// <summary>
+        /// 指定座標にあるページの <see cref="ViewContent"/> を取得する。
+        /// </summary>
+        /// <param name="point">この要素を基準とした座標</param>
+        /// <returns>ページが存在しない場合は null</returns>
+        public ViewContent? GetViewContentAt(Point point)
+        {
+            if (_disposedValue) return null;
+
+            var selected = _selected.Node?.Value.Content as PageFrameContent;
+
+            if (selected is not null)
+            {
+                var hit = GetViewContentAt(selected, point);
+                if (hit is not null) return hit;
+            }
+
+            foreach (var container in _containers)
+            {
+                if (container.Content is not PageFrameContent content) continue;
+                if (content == selected) continue;
+
+                var hit = GetViewContentAt(content, point);
+                if (hit is not null) return hit;
+            }
+
+            return null;
+        }
+
+        private ViewContent? GetViewContentAt(PageFrameContent content, Point point)
+        {
+            foreach (var viewContent in content.ViewContents)
+            {
+                if (viewContent.ActualWidth <= 0.0 || viewContent.ActualHeight <= 0.0) continue;
+
+                try
+                {
+                    var rect = viewContent.TransformToAncestor(this).TransformBounds(new Rect(0.0, 0.0, viewContent.ActualWidth, viewContent.ActualHeight));
+                    if (rect.Contains(point)) return viewContent;
+                }
+                catch (InvalidOperationException)
+                {
+                    return null;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// ページの自動回転角度を取得する
+        /// </summary>
+        /// <param name="viewContent">対象ページ</param>
+        /// <returns>表示角度。見つからない場合は 0.0</returns>
+        public double GetPageFrameAngle(ViewContent viewContent)
+        {
+            if (_disposedValue) return 0.0;
+
+            foreach (var container in _containers)
+            {
+                if (container.Content is not PageFrameContent content) continue;
+                if (content.ViewContents.Contains(viewContent)) return content.PageFrame.Angle;
+            }
+
+            return 0.0;
+        }
+
+        /// <summary>
         /// 選択している？ページの <see cref="PageFrameContent"/> を取得する。
         /// </summary>
         /// <returns><see cref="PageFrameContent"/> 存在しない場合はNULL</returns>

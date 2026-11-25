@@ -80,6 +80,12 @@ namespace NeeView
 
         public ViewContentMediaPlayer? Player => (_strategy as IHasViewContentMediaPlayer)?.Player;
         public ImageSource? ImageSource => (_strategy as IHasImageSource)?.ImageSource;
+
+        /// <summary>
+        /// 表示角度 (自動回転)
+        /// </summary>
+        public double RenderAngle => _angle;
+
         public BitmapScalingMode? ScalingMode
         {
             get { return (_strategy as IHasScalingMode)?.ScalingMode; }
