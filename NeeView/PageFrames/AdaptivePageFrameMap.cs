@@ -11,10 +11,11 @@ namespace NeeView.PageFrames
     /// アダプティブ表示のフレーム分割表
     /// </summary>
     /// <remarks>
-    /// フレームの切れ目は「ブック先頭から前方向に決まる」ものとして扱う。
+    /// フレームの切れ目は「アンカーページから前方向・後方向にそれぞれ決まる」ものとして扱う。
     /// 双方向のフレーム生成で同じ分割結果になるようにするため、この表が唯一の情報源となる。
     /// 計算は必要になったページまで順次行う(遅延評価)。
-    /// 表示に影響する変更(キャンバスサイズ、ページサイズ、ページ構成、並び方向、ページ間隔)で無効化する。
+    /// ページサイズ、ページ構成、並び方向、ページ間隔の変更で無効化する。
+    /// キャンバスサイズの変更は分割に即時反映せず、次のフレーム移動時にアンカーを決めて反映する(ApplyPendingLayout)。
     /// UIスレッドと先読みスレッドの両方から参照されるため、内部は lock で保護する。
     /// </remarks>
     public sealed class AdaptivePageFrameMap : IDisposable
@@ -27,6 +28,9 @@ namespace NeeView.PageFrames
         private readonly Dictionary<int, IDisposable> _sizeSubscriptions = new();
         private readonly IDisposable _contextSubscription;
         private readonly IDisposable _pagesChangedSubscription;
+        private Size? _layoutCanvasSize;
+        private bool _isRegroupPending;
+        private int _anchorIndex;
         private bool _disposedValue;
 
 
@@ -76,8 +80,44 @@ namespace NeeView.PageFrames
         {
             lock (_lock)
             {
-                _ranges.Clear();
-                _measures.Clear();
+                InvalidateAllLocked();
+            }
+        }
+
+        /// <summary>
+        /// 保留しているキャンバスサイズ変更を分割へ反映する
+        /// </summary>
+        /// <param name="anchorIndex">新しい分割のアンカーページ。通常は移動先ページ</param>
+        /// <remarks>
+        /// ウィンドウサイズ変更だけでは分割を変更せず、ページ移動時にこのメソッドで反映する。
+        /// 全分割を破棄し、anchorIndex より後ろは前方向、anchorIndex より前は後方向に
+        /// 現在のキャンバスサイズで計算し直す。
+        /// </remarks>
+        public void ApplyPendingLayout(int anchorIndex)
+        {
+            lock (_lock)
+            {
+                if (_disposedValue) return;
+                if (!_isRegroupPending) return;
+
+                // キャンバスが無効なとき(最小化など)は保留したままにする
+                if (!IsValidCanvasSize(_context.CanvasSize)) return;
+
+                var pageCount = _bookContext.Pages.Count;
+                if (pageCount <= 0)
+                {
+                    InvalidateAllLocked();
+                    return;
+                }
+
+                InvalidateAllLocked();
+
+                var anchor = anchorIndex;
+                if (anchor < 0 || anchor > pageCount)
+                {
+                    anchor = _bookContext.NormalizeIndex(anchor);
+                }
+                _anchorIndex = Math.Clamp(anchor, 0, pageCount);
             }
         }
 
@@ -88,23 +128,7 @@ namespace NeeView.PageFrames
         {
             lock (_lock)
             {
-                if (_ranges.Count == 0) return;
-
-                // index を含むフレーム以降を破棄する
-                var i = _ranges.FindIndex(e => e.End >= index);
-                if (i < 0) return;
-
-                _ranges.RemoveRange(i, _ranges.Count - i);
-
-                var keys = new List<int>();
-                foreach (var key in _measures.Keys)
-                {
-                    if (key >= index) keys.Add(key);
-                }
-                foreach (var key in keys)
-                {
-                    _measures.Remove(key);
-                }
+                InvalidateFromLocked(index);
             }
         }
 
@@ -139,6 +163,39 @@ namespace NeeView.PageFrames
         }
 
 
+        private void InvalidateAllLocked()
+        {
+            _ranges.Clear();
+            _measures.Clear();
+            _layoutCanvasSize = null;
+            _isRegroupPending = false;
+            _anchorIndex = 0;
+        }
+
+        /// <summary>
+        /// 指定ページ以降の分割を破棄する
+        /// </summary>
+        private void InvalidateFromLocked(int index)
+        {
+            if (_ranges.Count == 0) return;
+
+            // index を含むフレーム以降を破棄する
+            var i = _ranges.FindIndex(e => e.End >= index);
+            if (i < 0) return;
+
+            _ranges.RemoveRange(i, _ranges.Count - i);
+
+            var keys = new List<int>();
+            foreach (var key in _measures.Keys)
+            {
+                if (key >= index) keys.Add(key);
+            }
+            foreach (var key in keys)
+            {
+                _measures.Remove(key);
+            }
+        }
+
         /// <summary>
         /// index を含むフレームが決まるまで分割を進める
         /// </summary>
@@ -149,28 +206,90 @@ namespace NeeView.PageFrames
 
             while (true)
             {
-                var last = _ranges.Count - 1;
-                if (last >= 0 && index <= _ranges[last].End)
+                if (_ranges.Count == 0)
                 {
-                    return;
+                    var added = index >= _anchorIndex
+                        ? AddForwardRange(_anchorIndex, pageCount)
+                        : AddBackwardRange(_anchorIndex - 1, pageCount);
+                    if (!added) return;
+                    continue;
                 }
 
-                var start = last >= 0 ? _ranges[last].End + 1 : 0;
-                if (start >= pageCount) return;
+                if (index < _ranges[0].Start)
+                {
+                    if (!AddBackwardRange(_ranges[0].Start - 1, pageCount)) return;
+                    continue;
+                }
 
-                var count = AdaptivePagePacker.GetFramePageCount(
-                    GetMeasure,
-                    pageCount,
-                    _context.CanvasSize.Width,
-                    _context.CanvasSize.Height,
-                    Math.Max(0.0, _context.ContentsSpace),
-                    _context.StackOrientation,
-                    start,
-                    PageFrameContext.AdaptiveMaxPageCount);
+                if (index > _ranges[^1].End)
+                {
+                    if (!AddForwardRange(_ranges[^1].End + 1, pageCount)) return;
+                    continue;
+                }
 
-                var end = Math.Min(start + count - 1, pageCount - 1);
-                _ranges.Add(new FrameRange(start, end));
+                return;
             }
+        }
+
+        /// <summary>
+        /// 前方分割を追加する
+        /// </summary>
+        /// <returns>追加した場合 true。範囲外の場合は false</returns>
+        private bool AddForwardRange(int start, int pageCount)
+        {
+            if (start < 0 || start >= pageCount) return false;
+
+            var canvasSize = GetLayoutCanvasSize();
+            var count = AdaptivePagePacker.GetFramePageCount(
+                GetMeasure,
+                pageCount,
+                canvasSize.Width,
+                canvasSize.Height,
+                Math.Max(0.0, _context.ContentsSpace),
+                _context.StackOrientation,
+                start,
+                PageFrameContext.AdaptiveMaxPageCount);
+
+            var end = Math.Min(start + count - 1, pageCount - 1);
+            _ranges.Add(new FrameRange(start, end));
+            return true;
+        }
+
+        /// <summary>
+        /// 後方分割を追加する
+        /// </summary>
+        /// <returns>追加した場合 true。範囲外の場合は false</returns>
+        private bool AddBackwardRange(int end, int pageCount)
+        {
+            if (end < 0 || end >= pageCount) return false;
+
+            // 逆順の測定値で前方分割と同じ計算を行う
+            var canvasSize = GetLayoutCanvasSize();
+            var count = AdaptivePagePacker.GetFramePageCount(
+                i => GetMeasure(end - i),
+                end + 1,
+                canvasSize.Width,
+                canvasSize.Height,
+                Math.Max(0.0, _context.ContentsSpace),
+                _context.StackOrientation,
+                0,
+                PageFrameContext.AdaptiveMaxPageCount);
+
+            var start = Math.Max(0, end - count + 1);
+            _ranges.Insert(0, new FrameRange(start, end));
+            return true;
+        }
+
+        /// <summary>
+        /// 分割に使用しているキャンバスサイズ
+        /// </summary>
+        /// <remarks>
+        /// サイズ変更はフレーム移動まで反映しないため、分割開始時のサイズを保持する。
+        /// </remarks>
+        private Size GetLayoutCanvasSize()
+        {
+            _layoutCanvasSize ??= _context.CanvasSize;
+            return _layoutCanvasSize.Value;
         }
 
         private int FindRange(int index)
@@ -235,11 +354,49 @@ namespace NeeView.PageFrames
             switch (e.PropertyName)
             {
                 case nameof(PageFrameContext.CanvasSize):
+                    OnCanvasSizeChanged();
+                    break;
+
                 case nameof(PageFrameContext.ContentsSpace):
                 case nameof(PageFrameContext.StackOrientation):
                     InvalidateAll();
                     break;
             }
+        }
+
+        /// <summary>
+        /// キャンバスサイズ変更
+        /// </summary>
+        /// <remarks>
+        /// 表示中の分割は維持し、次のフレーム移動時に新しいサイズを反映する。
+        /// 初期化前の暫定サイズで分割されている場合のみ即時破棄する。
+        /// </remarks>
+        private void OnCanvasSizeChanged()
+        {
+            lock (_lock)
+            {
+                if (_disposedValue) return;
+                if (_ranges.Count == 0) return;
+
+                var layoutCanvasSize = _layoutCanvasSize;
+                if (layoutCanvasSize is null || !IsValidCanvasSize(layoutCanvasSize.Value))
+                {
+                    // 初期化前の暫定サイズ。即時反映する
+                    InvalidateAllLocked();
+                    return;
+                }
+
+                // 元のサイズに戻った場合は再分割不要
+                _isRegroupPending = layoutCanvasSize.Value != _context.CanvasSize;
+            }
+        }
+
+        /// <summary>
+        /// 分割に使用できるキャンバスサイズか？
+        /// </summary>
+        private static bool IsValidCanvasSize(Size size)
+        {
+            return size.Width > PageFrameProfile.MinWidth && size.Height > PageFrameProfile.MinHeight;
         }
 
 

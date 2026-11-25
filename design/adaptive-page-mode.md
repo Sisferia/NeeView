@@ -1,6 +1,7 @@
 # 自适应显示（Adaptive Page Mode）实现规划
 
 > 状态：**已实现（P0–P3 完成，构建通过，单元测试通过）**
+> **追记（2026-11-25）**：窗口缩放时不再实时重算分组，改为在换书/翻页/跳页时应用新尺寸（见 §1.2 决策⑥、§5.2）。
 > 目标仓库：`Sisferia/NeeView`（fork of `neelabo/NeeView`，分支 `master`，HEAD `686a43362 chore: v46.3`）
 > 影响范围：`NeeView/PageFrames`（核心）、`NeeView/Book`、`NeeView/Command`、`NeeView/Menu`、`NeeView/Styles`、`NeeView/Languages`
 > 本文中所有 `文件:行号` 均基于上述 HEAD 的实测代码，行号仅作导航锚点，改动后需重新定位。
@@ -15,11 +16,12 @@
 - **核心新增 3 件东西：**
   1. `PageMode.Adaptive` 枚举值与模式判定（替换写死 1/2 的 `GetFramePageSize`）；
   2. `AdaptivePagePacker`（纯算法：按画布宽高比贪心装填，可单测）；
-  3. `AdaptivePageFrameMap`（规范化前向分组表：保证正向/反向取帧一致，带缓存与失效）。
+  3. `AdaptivePageFrameMap`（单一分割表：初始以书首为锚点，窗口尺寸变更后以移动目标页为锚点重建；
+     正/反向共享同一分割，带缓存与失效）。
 - **判据：** 用「把每张图缩放到画布高度后得到的宽度」累加，当再加一张会超过画布宽度时停止：
   `Σ(w_i/h_i) ≤ W/H`（严格，不含越界页）。这样整行**高度恰好铺满画布**，且张数是该约束下的最大值。
   用户示例（600/200/100/500 @ 1200×800）得到 **3 张**（900 ≤ 1200；加第四张 1400 > 1200）。
-- **最大风险：** 分组必须“从书首前向推导”，否则前后翻页会出现跳页/重叠（§3.4 有反例）；
+- **最大风险：** 分组必须由单一分割表决定，否则前后翻页会出现跳页/重叠（§3.4 有反例）；
   其次是后台线程建帧（`BookPageLoader`）对分组表的并发访问。
 - **环境已验证：** `dotnet build NeeView.sln -c Debug` 0 警告 / 0 错误；`dotnet test` 新增 11 个分割算法单测全部通过。
 
@@ -42,19 +44,21 @@
 | R2 | 顺序装填 | 从当前页开始，沿阅读顺序向后取页，前缀式（不可跳过中间页） |
 | R3 | 宽度预算 | 每页按“缩放到画布高度”后的宽度累加，以主视图画布宽度为预算 |
 | R4 | 填满 + 尽量多 | 严格不超预算：整行高度恰好铺满画布，张数为该约束下的最大值；至少 1 页 |
-| R5 | 宽度驱动 | 窗口宽度变化后，重算分组（可能多一张或少一张） |
+| R5 | 尺寸驱动（延迟） | 窗口尺寸变化本身不改变当前分组；在**换书 / 翻页 / 跳页**时按新画布尺寸重新分组 |
 | R6 | 不破坏现有模式 | 单页/双页行为、设置、书签历史、脚本 API 保持兼容 |
 
 > **决策记录（2026-11-25）**：① 以主视图画布宽度为准；② ~~允许略微缩小以铺满宽度~~ →
 > **改为“高度优先”**：不纳入越界页，保证同时显示的图片高度都铺满画布；③ 单屏页数上限不暴露到设置；
-> ④ 翻页按“整组”移动；⑤ 竖排（Vertical）模式改为纵向堆叠（横屏对称：宽度铺满画布）。
+> ④ 翻页按“整组”移动；⑤ 竖排（Vertical）模式改为纵向堆叠（横屏对称：宽度铺满画布）；
+> ⑥ **窗口缩放不改变分组**：缩放时当前组保持不变，新尺寸在换书 / 翻页 / 跳页时应用
+> （以移动目标页为锚点重建分割表，向前/向后都按新尺寸分组，见 §5.2）。
 
 ### 1.3 验收清单（功能）
 
 - [x] 模式菜单 / 快捷键 / 地址栏按钮可在 单页 → 双页 → 自适应 之间切换（含循环切换命令）。
 - [x] 自适应模式下，一屏内按顺序显示 N 张图，**行内等高且高度铺满画布**，间距沿用双页模式的“页间距”。
 - [x] 例：1200×800 画布、四张 600×800 / 200×800 / 100×800 / 500×800 的图，显示前 3 张（900×800，高度铺满）。
-- [x] 拖动窗口宽度，分组随之变化，且不发生图片重叠、闪烁、错位。
+- [x] 拖动窗口大小：**当前显示的页面数量与内容不变**（仅缩放）；随后的翻页 / 跳页按新尺寸重新分组。
 - [x] 前后翻页、页码跳转、页面滑块、循环浏览均可用。
 - [x] 设置可持久化（下次启动/重新打开同一本书仍为自适应模式）。
 - [ ] 关闭该模式后，单页/双页行为与改动前完全一致（回归测试待人工确认）。
@@ -108,6 +112,9 @@ PageFrameScrollViewer.SizeChanged
 
 `PageFrameDirtyLevel.Moderate` 的语义是“PageFrame 信息有差异就更新视图”（`PageFrameDirtyLevel.cs:14`），
 所以**只要帧工厂在宽度变化后返回不同的帧，现有管线就会自动重建**，这是本方案能低成本落地的第二个关键点。
+
+> **决策⑥（2026-11-25）之后**：`CanvasSize` 变化不再使分组表失效（见 §5.2）。
+> 缩放时上述链路只会用旧分组重新生成/重新拉伸当前帧，**页面数量不变**；新的画布尺寸在下次页面移动时才应用。
 
 ### 2.4 页面尺寸的可得性（决定算法边界）
 
@@ -217,41 +224,49 @@ while i ≤ last and count < K:
 双页模式之所以没这个问题，是因为每组页数固定（横长页/首末页等特殊情形另有 `IsStaticWidePage` 的
 索引对齐兜底，`PageFrameFactory.cs:216`），双向取帧结果一致；**可变长度分组打破了这种对称性**。
 
-#### 设计决策：规范化前向分组（canonical forward partition）
+#### 设计决策：单一分割表 + 锚点（anchor partition）
 
-把“页流”当作文本排版中的“行”：
-**行边界只从书的第一页开始向前推导，与当前浏览位置/方向无关。**
+把“页流”当作文本排版中的“行”，但**行边界始终由同一张分割表决定**：
 
-- 分组表 `G = { [s_0..e_0], [s_1..e_1], ... }` 是 (书, 画布宽度, 各页尺寸) 的纯函数。
-- `CreatePageFrame(position, ±1)` 无论方向，都先求 `s = 包含 position.Index 的组起点`，再按组内顺序构建元素，
+- 初始分割表以书首为锚点向前推导，等价于“规范化前向分组”。
+- 窗口尺寸变更后的第一次页面移动时，以移动目标页为锚点重建分割表：
+  锚点之后向前装填，锚点之前向后装填（后向装填用逆序测量值执行同样的贪心计算）。
+- `CreatePageFrame(position, ±1)` 无论方向，都先求 `包含 position.Index 的组`，再按组内顺序构建元素，
   最后按 `direction` 决定元素排列方向（沿用现有 `.Direction(direction)` 写法，`PageFrameFactory.cs:295`）。
-- 这样任意方向的帧都来自同一张表 → **绝不重叠、绝不跳页**。
+- 这样任意方向的帧都来自同一张表 → **绝不重叠、绝不跳页**；且尺寸变更后向前/向后翻页都使用新尺寸（决策⑥）。
 
 #### 分组表的数据结构与生命周期
 
-新增 `NeeView/PageFrames/AdaptivePageFrameMap.cs`（约 150 行）：
+新增 `NeeView/PageFrames/AdaptivePageFrameMap.cs`（约 450 行）：
 
 ```csharp
 public sealed class AdaptivePageFrameMap : IDisposable
 {
-    // 前方扫描确定的各帧首页 index（升序）
-    private readonly List<int> _frameStarts = new();
+    // アンカーから前方・後方に決定されたフレーム範囲（昇順、連続）
+    private readonly List<FrameRange> _ranges = new();
+    private Size? _layoutCanvasSize;      // 現在の分割を作ったときのキャンバスサイズ
+    private bool _isRegroupPending;       // キャンバスサイズ変更を次のフレーム移動で反映する
+    private int _anchorIndex;             // 前方分割の先頭ページ
 
-    public PageRange GetFrameRange(int index);   // 包含 index 的帧范围；必要时向前补算
+    public PageRange GetFrameRange(int index);   // 包含 index 的帧范围；必要时向前/后补算
     public int GetFrameStart(int index);
     public void InvalidateFrom(int index);       // 某页尺寸变化后，从该页所在帧开始失效
-    public void InvalidateAll();                 // 画布宽度/页列表/显示配置变化
+    public void InvalidateAll();                 // 页列表/显示配置变化
+    public void ApplyPendingLayout(int anchorIndex); // 保留しているキャンバスサイズ変更を反映
 }
 ```
 
-- **惰性前进**：只算到“当前需要的页”为止，不预先扫描全书。复杂度 `O(到当前页的组数)`，
-  每组只做一次除法（宽高比），1 万页量级为毫秒级。
-- **缓存**：`_frameStarts` 每个元素 4 字节；另可缓存每页 `a_i`（`double`）避免重复计算。
+- **锚点分割**：初始时锚点 = 0，只向前装填（等价于书首规范化分组）。
+  发生尺寸变更后的第一次移动时，以移动目标页为锚点重建：锚点之后向前装填、锚点之前向后装填，
+  两侧都使用新的画布尺寸，因此前后翻页都会得到新尺寸下的分组。
+- **惰性前进**：只算到“当前需要的页”为止，不预先扫描全书。每组只做一次除法（宽高比），1 万页量级为毫秒级。
+- **缓存**：`_ranges` 每个元素 8 字节；另可缓存每页 `a_i`（`double`）避免重复计算。
 - **失效条件**：
 
 | 触发 | 处理 |
 |---|---|
-| `CanvasSize` 宽度变化 | `InvalidateAll()`（由 `PageFrameBox.Context_SizeChanged` 之后调用，见 §5.2） |
+| `CanvasSize` 变化 | **不立即失效**。仅记录“待重分组”（`_isRegroupPending`），当前分组继续使用旧画布尺寸 |
+| 下一次页面移动（`PageFrameBox.MoveTo`） | `ApplyPendingLayout(anchorIndex)`：丢弃全部分组，以移动目标页为锚点按当前画布尺寸重建（Next: 目标页为帧首；Previous: 目标页为帧尾） |
 | 页列表变化（换书、排序、增删） | `InvalidateAll()`（复用 `BookContext.SubscribePagesChanged`，`PageFrameBox.cs:67`） |
 | 某页 `Page.SizeChanged`（加载完成/尺寸修正） | `InvalidateFrom(page.Index)`（订阅 `Page.SubscribeSizeChanged`） |
 | 影响显示尺寸的配置变化（自定义尺寸/裁剪/宽高比归一化） | `InvalidateAll()`（这些变化已触发 `UpdateContainers(Heavy)`，`PageFrameBox.cs:640`） |
@@ -265,11 +280,11 @@ public sealed class AdaptivePageFrameMap : IDisposable
 
 | 方案 | 做法 | 缺点 |
 |---|---|---|
-| A. 锚点贪心 | 反向时以锚点页为末页向左贪心 | 交叉验证失败（§3.4 反例），会产生跳页 |
+| A. 方向别アンカー貪欲 | 帧创建時に方向ごとにアンカーから独立して貪欲に分割する | 交叉验证失败（§3.4 反例），会产生跳页 |
 | B. 固定页数 | 由窗口宽度算出固定 k 页/帧（如双页的推广） | 不满足 R3（不能按图片宽度自适应） |
 | C. 全局预计算 | 换书/换宽度时一次性算完整表 | 大书浪费；且未加载页尺寸未知，仍需惰性 |
 
-**结论：采用“规范化前向分组 + 惰性补算”，即上面的设计。**
+**结论：采用“单一分割表 + 惰性双向补算”**：初始锚点为书首，尺寸变更后的第一次页面移动以移动目标页为锚点重建。
 
 ### 3.5 未知尺寸页的处理策略
 
@@ -483,13 +498,30 @@ public static bool IsAdaptive(this PageMode mode) => mode == PageMode.Adaptive;
 实现要点：`MoveToNextPage()` 目前把 `frameRange.Top(±1).Index ± 1` 直接当作下一帧起点（`PageFrameBox.cs:996`），
 该假设只对固定 2 页分组成立；自适应下必须由分组表把任意目标页归一化到所属组的起点（见 §4.3 的 `FixFramePosition`）。
 
-### 5.2 窗口缩放
+### 5.2 窗口缩放（决策⑥：延迟应用）
+
+**缩放时**
 
 1. 用户拖动窗口 → `CanvasSize` 变化。
-2. `PageFrameBox.Context_SizeChanged` → `AdaptivePageFrameMap.InvalidateAll()` → `UpdateContainers(Moderate)`。
-3. 帧工厂按新宽度重新分组 → 若帧内容变化，视图重建（现有管线）。
-4. 期望：图片数量随之增减，`FrameRange` 变化不导致当前页“丢失”；`SelectedContainer` 仍指向包含当前页的组。
-5. P4 优化：连续拖动时（<100ms）合并重排，避免中间态闪烁。
+2. `AdaptivePageFrameMap` **不使分割失效**，只记录 `_isRegroupPending = true`，并保留当前分割所用的旧画布尺寸。
+3. `PageFrameBox.Context_SizeChanged` → `UpdateContainers(Moderate)`：帧工厂用**旧分组**重新生成/拉伸当前帧，
+   **页面数量与内容不变**，仅显示尺寸随窗口缩放（由 `StretchMode` 决定等比缩放）。
+
+**下一次页面移动时（翻页 / 跳页 / 换书）**
+
+4. `PageFrameBox.MoveTo()` 在页面位置补正之后，按移动方向计算锚点：
+   `Next` → `position.Index`，`Previous` → `position.Index + 1`，并调用 `PageFrameFactory.ApplyPendingAdaptiveLayout(anchorIndex)`。
+5. `ApplyPendingLayout(anchorIndex)` 丢弃全部分割，以锚点重建：
+   - 锚点之后（含锚点）向前装填，锚点之前向后装填，两侧都使用**当前画布尺寸**；
+   - 因此向前翻页时目标页成为新组的首页，向后翻页时目标页成为新组的末页（与 NeeView 既有的方向语义一致）；
+   - 当前显示在移动发生前保持不变。
+6. 之后的翻页/跳页都在该锚点分割表上双向计算，前后翻页均按当前窗口尺寸分组；换书时分割表随新的
+   `PageFrameBox`/`PageFrameFactory` 重建，直接按当前尺寸从书首计算。
+7. 跳页（页面滑块 / 地址 / 命令）同样经由 `MoveTo()` 触发应用。
+
+> 说明：初版曾采用“保留当前帧之前的分组、只重算之后的帧”的锚点方案，但缩放后**向后翻页仍会显示缩放前的组**
+> （例如缩小到一屏一张后，向前翻页正确显示 1 张，再向后翻页又回到 3 张）。现改为以移动目标页为锚点、
+> 前后两个方向都按新尺寸重建分割表，已验证前后翻页都符合预期。
 
 ### 5.3 加载中的表现
 
@@ -710,7 +742,7 @@ public sealed class AdaptivePageFrameMap
 | `NeeView/Book/PageMode.cs` | 新增 `Adaptive`；`Validate` 上界；新增 `IsSinglePage`/`IsWidePage`/`IsAdaptive`/`IsMultiPageFrame` |
 | `NeeView/Config/ConfigExtensions.cs` | **删除**（`GetFramePageSize` 会抛异常且无法表达动态页数） |
 | `NeeView/PageFrames/AdaptivePagePacker.cs` | 新增：纯函数分割算法（高度优先 + 竖排） |
-| `NeeView/PageFrames/AdaptivePageFrameMap.cs` | 新增：规范化前向分组表（惰性、缓存、失效、加锁、页面尺寸订阅） |
+| `NeeView/PageFrames/AdaptivePageFrameMap.cs` | 新增：单一分割表（书首/移动目标页锚点、双向惰性补算、缓存、失效、加锁、页面尺寸订阅） |
 | `NeeView/PageFrames/PageFrameFactory.cs` | 新增 `CreateAdaptivePageFrame`、`CreateMultiPageFrame`、`GetAdaptiveStretchMode`；实现 `IDisposable`；`FixFramePosition`/`IsValidFramePosition` 适配 |
 | `NeeView/PageFrames/PageFrame.cs` | 新增 `StackOrientation` 与轴相关尺寸计算；自动旋转开关；`AssertValid` 支持 1..N |
 | `NeeView/PageFrames/ContentSizeCalcurator.cs` | `CalcFrameStretchScale` 增加轴参数（span 作用于并排方向）；`CalcContentScale` 增加对齐方式重载 |
@@ -733,6 +765,15 @@ public sealed class AdaptivePageFrameMap
 3. **竖排**：规划为“始终横向”，按决策⑤改为纵向堆叠，涉及 `PageFrame` 尺寸模型与布局两处。
 4. **对齐方式**：自适应模式下强制 `UniformHeight`（竖排 `UniformWidth`），不受 `WidePageStretch` 影响。
 5. **`IsValidContainerFormat`**：审计发现的既有问题（`partSize == 2` 对多页帧恒 false）在本次一并修正。
+6. **窗口缩放（决策⑥，2026-11-25 追记）**：规划为“缩放即重算分组”；最终实现为
+   “缩放只重新拉伸当前分组，页面移动时以**移动目标页为锚点**、按新尺寸重建分割表”
+   （`AdaptivePageFrameMap.ApplyPendingLayout(anchorIndex)`，由 `PageFrameBox.MoveTo()` 在位置补正后调用；
+   锚点 = Next: 目标页 / Previous: 目标页+1，于是目标页分别成为新组的首页/末页）。
+   期间试过两种中间方案并放弃：
+   - “保留当前帧之前的分割、只重算之后”：缩放后向后翻页仍显示旧分组（用户实测不符合预期）；
+   - “丢弃全部分割、从书首重新规范化”：向后翻页虽按新尺寸，但移动目标可能落在新组中间，
+     前后方向的“目标页在组首/组尾”语义被破坏，且放大窗口后首次翻页会重复显示当前页。
+   另：初始化的暂定画布尺寸（32×32）仍会即时失效，避免启动时用错误尺寸分组。
 
 ### D.3 验证
 
@@ -745,7 +786,7 @@ dotnet test NeeView.UnitTest\NeeView.UnitTest.csproj --filter AdaptivePagePacker
 
 1. 打开一个含不同尺寸图片的文件夹 → 切到“自适应显示”（Ctrl+3 / 菜单 / 地址栏图标）。
 2. 观察一屏 N 张、行内等高、**图片高度刚好等于画布高度**（可能右侧留白）。
-3. 拖动窗口宽度 → 张数应随之变化，且不出现重叠、跳页。
+3. 拖动窗口大小（例如从一屏 3 张缩到 1 张）→ **当前张数与内容不变**；随后向前翻页 → 1 张，再向后翻页 → 仍为 1 张（都按新尺寸）。
 4. 前后翻页（PageUp/PageDown、滚轮）→ 每次移动一整组。
 5. 切回单页/双页 → 行为应与改动前一致（重点回归：双页模式的横长页、首末页、补空白页）。
 6. 竖向模式（页面方向：纵向）下切到自适应 → 应纵向堆叠。

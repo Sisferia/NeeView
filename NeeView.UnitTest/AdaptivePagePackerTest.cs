@@ -146,6 +146,39 @@ namespace NeeView.UnitTest
         }
 
         [Fact]
+        public void Packer_BackwardFrame()
+        {
+            // 後方フレームは測定値を逆順にして同じ計算を行う
+            // 予算 1200/800 = 1.5 に対して 0.625 + 0.125 + 0.25 = 1.0 まで取り込み、+0.75 で超過
+            var measures = new List<double> { 0.75, 0.25, 0.125, 0.625 };
+            var end = 3;
+
+            var count = AdaptivePagePacker.GetFramePageCount(i => measures[end - i], end + 1, 1200, 800, 0.0, PageFrameOrientation.Horizontal, 0, 8);
+
+            Assert.Equal(3, count);
+            Assert.Equal(1, end - count + 1);
+        }
+
+        [Fact]
+        public void Packer_BackwardFrame_CannotExceedBudget()
+        {
+            // 後方フレームでも合計が予算を超えないこと
+            var measures = new List<double> { 0.4, 0.3, 0.9, 0.2, 0.7, 0.1 };
+            var end = 5;
+            var budget = 1200.0 / 800.0;
+
+            var count = AdaptivePagePacker.GetFramePageCount(i => measures[end - i], end + 1, 1200, 800, 0.0, PageFrameOrientation.Horizontal, 0, 8);
+
+            Assert.True(count >= 1);
+            var sum = 0.0;
+            for (var i = 0; i < count; i++)
+            {
+                sum += measures[end - i];
+            }
+            Assert.True(sum <= budget + 1e-9, $"sum={sum} budget={budget}");
+        }
+
+        [Fact]
         public void Measure_InvalidSize()
         {
             Assert.Equal(1.0, AdaptivePagePacker.GetMeasure(0, 0, PageFrameOrientation.Horizontal), 6);

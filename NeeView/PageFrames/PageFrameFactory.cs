@@ -39,6 +39,19 @@ namespace NeeView.PageFrames
         }
 
 
+        /// <summary>
+        /// 保留しているキャンバスサイズ変更を分割へ反映する
+        /// </summary>
+        /// <param name="anchorIndex">新しい分割のアンカーページ。通常は移動先ページ</param>
+        /// <remarks>
+        /// ウィンドウサイズ変更だけではページ数を変えず、フレーム移動時に反映する。
+        /// </remarks>
+        public void ApplyPendingAdaptiveLayout(int anchorIndex)
+        {
+            _adaptiveMap.ApplyPendingLayout(anchorIndex);
+        }
+
+
         public PageRange GetFirstTerminalRange()
         {
             return new PageRange(new PagePosition(-1, 0), 2);

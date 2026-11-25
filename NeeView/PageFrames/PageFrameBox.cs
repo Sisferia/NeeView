@@ -38,6 +38,7 @@ namespace NeeView.PageFrames
         private readonly BookContext _bookContext;
         private readonly BookPageLoader _loader;
         private readonly ContentSizeCalculator _calculator;
+        private readonly PageFrameFactory _frameFactory;
         private readonly PageFrameContainerVisiblePageWatcher _visiblePageWatcher;
         private readonly PageFrameContainerViewBox _viewBox;
         private readonly PageFrameContainerCollectionRectMath _rectMath;
@@ -84,12 +85,12 @@ namespace NeeView.PageFrames
             _disposables.Add(_transformMap);
 
             _calculator = new ContentSizeCalculator(_context);
-            var frameFactory = new PageFrameFactory(_context, _bookContext, _calculator);
-            _disposables.Add(frameFactory);
+            _frameFactory = new PageFrameFactory(_context, _bookContext, _calculator);
+            _disposables.Add(_frameFactory);
             _viewSourceMap = new ViewSourceMap(_bookContext.BookMemoryService);
             _disposables.Add(_viewSourceMap);
             var elementScaleFactory = new PageFrameElementScaleFactory(_context, _transformMap, loupeContext);
-            _loader = new BookPageLoader(_bookContext, frameFactory, _viewSourceMap, elementScaleFactory, _bookContext.BookMemoryService, _context.PerformanceConfig);
+            _loader = new BookPageLoader(_bookContext, _frameFactory, _viewSourceMap, elementScaleFactory, _bookContext.BookMemoryService, _context.PerformanceConfig);
             _disposables.Add(_loader);
             _disposables.Add(_loader.SubscribePropertyChanged(nameof(BookPageLoader.IsBusy), (s, e) => OnPropertyChanged(nameof(IsBusy))));
 
@@ -97,7 +98,7 @@ namespace NeeView.PageFrames
             _disposables.Add(baseScaleTransform);
             var containerFactory = new PageFrameContainerFactory(_context, _transformMap, _viewSourceMap, loupeContext, baseScaleTransform, _calculator);
             _disposables.Add(containerFactory);
-            _containers = new PageFrameContainerCollection(_context, frameFactory, containerFactory);
+            _containers = new PageFrameContainerCollection(_context, _frameFactory, containerFactory);
             _disposables.Add(_containers);
             _rectMath = new PageFrameContainerCollectionRectMath(_context, _containers);
             _layout = new PageFrameContainerLayout(_context, _containers);
@@ -792,6 +793,12 @@ namespace NeeView.PageFrames
             {
                 (position, direction) = CorrectPosition(new(position, direction), relational);
             }
+
+            // キャンバスサイズ変更による再分割はフレーム移動時に反映する
+            // 移動方向に応じて移動先ページを新しい分割のアンカーにする
+            // 次方向: 移動先ページがフレーム先頭、前方向: 移動先ページがフレーム末尾になる
+            var adaptiveAnchorIndex = direction == LinkedListDirection.Next ? position.Index : position.Index + 1;
+            _frameFactory.ApplyPendingAdaptiveLayout(adaptiveAnchorIndex);
 
             var next = _containers.EnsureLatestContainerNode(position, direction, CreateContainerNodeOptions.None);
             if (next is null) return;
