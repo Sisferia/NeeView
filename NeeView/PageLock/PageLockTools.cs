@@ -193,12 +193,22 @@ namespace NeeView
         }
 
         /// <summary>
-        /// ページ固定が可能か? (R1: 表示中に最低1ページの未固定ページを残す)
+        /// 指定ページ以外に未固定ページがあるか? (全ページ固定の防止)
         /// </summary>
-        /// <param name="unlockedPageCountInCurrentView">現在の画面で未固定のページ数</param>
-        public static bool CanLockPage(int unlockedPageCountInCurrentView)
+        /// <param name="exceptIndex">除外するページインデックス</param>
+        /// <param name="pageCount">ページ数</param>
+        /// <param name="isPageLocked">ページが固定されているか判定する関数</param>
+        public static bool HasUnlockedPageExcept(int exceptIndex, int pageCount, Func<int, bool> isPageLocked)
         {
-            return unlockedPageCountInCurrentView >= 2;
+            if (pageCount <= 0 || isPageLocked is null) return false;
+
+            for (var i = 0; i < pageCount; i++)
+            {
+                if (i == exceptIndex) continue;
+                if (!isPageLocked(i)) return true;
+            }
+
+            return false;
         }
 
         /// <summary>

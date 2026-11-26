@@ -121,15 +121,41 @@ namespace NeeView.UnitTest
             Assert.Equal(new Thickness(0.0, 300.0, 0.0, 0.0), margin);
         }
 
-        [Theory]
-        [InlineData(0, false)]
-        [InlineData(1, false)]
-        [InlineData(2, true)]
-        [InlineData(3, true)]
-        public void CanLockPage_KeepsOneUnlocked(int unlockedPageCountInCurrentView, bool expected)
+        [Fact]
+        public void HasUnlockedPageExcept_AnotherUnlocked()
         {
-            // R1: 未固定ページが2ページ以上あるときだけ固定できる
-            Assert.Equal(expected, PageLockTools.CanLockPage(unlockedPageCountInCurrentView));
+            // 対象以外に未固定ページがある
+            var locked = new[] { false, false, true };
+            Assert.True(PageLockTools.HasUnlockedPageExcept(0, locked.Length, i => locked[i]));
+        }
+
+        [Fact]
+        public void HasUnlockedPageExcept_AllOthersLocked()
+        {
+            // 対象以外がすべて固定済み = 全ページ固定になる
+            var locked = new[] { false, true, true };
+            Assert.False(PageLockTools.HasUnlockedPageExcept(0, locked.Length, i => locked[i]));
+        }
+
+        [Fact]
+        public void HasUnlockedPageExcept_TargetAlreadyLocked()
+        {
+            // 対象の固定状態には依存しない
+            var locked = new[] { true, false };
+            Assert.True(PageLockTools.HasUnlockedPageExcept(0, locked.Length, i => locked[i]));
+        }
+
+        [Fact]
+        public void HasUnlockedPageExcept_SinglePage()
+        {
+            var locked = new[] { false };
+            Assert.False(PageLockTools.HasUnlockedPageExcept(0, locked.Length, i => locked[i]));
+        }
+
+        [Fact]
+        public void HasUnlockedPageExcept_EmptyBook()
+        {
+            Assert.False(PageLockTools.HasUnlockedPageExcept(0, 0, _ => false));
         }
 
         [Theory]

@@ -119,6 +119,8 @@ namespace NeeView.PageFrames
                 }
 
                 // 全ページ固定: 近傍の未固定ページに読み替える
+                // NOTE: 固定操作で画面が空になった場合は、まず次の未固定ページ(後継ページ)を探す。
+                //       これにより「最後の未固定ページを固定したら次のページを表示する」動作になる。
                 var next = FindNextUnlockedPosition(target, isReversed ? -direction : direction);
                 if (next is null && !isReversed)
                 {
@@ -353,6 +355,7 @@ namespace NeeView.PageFrames
             }
 
             // 全ページ固定: 近傍の未固定ページを含むフレームに読み替える
+            // NOTE: 固定操作でフレームが空になった場合は、まず後続の未固定ページを探す（次ページ表示）。
             var redirectRange = FindNearestUnlockedAdaptiveRange(range, direction);
             return redirectRange is null ? null : CreateAdaptiveFrameCore(redirectRange.Value);
         }

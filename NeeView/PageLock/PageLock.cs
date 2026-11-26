@@ -47,7 +47,9 @@ namespace NeeView
 
         private PageLock()
         {
-            _disposables.Add(Config.Current.BookSetting.SubscribePropertyChanged(nameof(BookSettingConfig.PageMode), (s, e) => OnPageModeChanged()));
+            // BookSetting はブック読み込み時にワーカースレッドで更新されることがある。
+            // レイアウト更新は UI スレッドで行う必要があるため、ディスパッチャーに委譲する。
+            _disposables.Add(Config.Current.BookSetting.SubscribePropertyChanged(nameof(BookSettingConfig.PageMode), (s, e) => AppDispatcher.BeginInvoke(OnPageModeChanged)));
             _disposables.Add(Config.Current.Book.SubscribePropertyChanged(nameof(BookConfig.IsPanorama), (s, e) => OnBookSettingChanged()));
             _disposables.Add(BookOperation.Current.SubscribeBookChanged((s, e) => OnBookChanged(e.Book)));
 
@@ -251,10 +253,10 @@ namespace NeeView
                 return false;
             }
 
-            // R1: 現在画面の最後の未固定ページは固定できない
-            if (!PageLockTools.CanLockPage(GetUnlockedPageCountInCurrentView()))
+            // 最後の未固定ページを固定すると表示できるページが無くなるため、その場合のみ拒否する
+            if (IsLastUnlockedPageInBook(page))
             {
-                ShowMessage(TextResources.GetString("PageLock.KeepOneUnlocked"));
+                ShowMessage(TextResources.GetString("PageLock.CannotLockAll"));
                 return false;
             }
 
@@ -369,23 +371,20 @@ namespace NeeView
         }
 
         /// <summary>
-        /// 現在の画面で未固定のページ数
+        /// 指定ページが現在のブックで最後の未固定ページか?
         /// </summary>
-        private int GetUnlockedPageCountInCurrentView()
+        /// <remarks>
+        /// このページを固定すると主ビューに表示できるページが無くなるため、固定を拒否する。
+        /// </remarks>
+        private bool IsLastUnlockedPageInBook(Page page)
         {
-            var frameContent = MainViewComponent.Current.PageFrameBoxPresenter.View?.GetSelectedPageFrameContent();
-            if (frameContent is not null)
-            {
-                return frameContent.ViewContents.Count(e => !IsPageLocked(e.Page));
-            }
-
             var book = BookOperation.Current.Book;
-            if (book is not null)
-            {
-                return book.Pages.Count(e => !IsPageLocked(e));
-            }
+            if (book is null) return false;
 
-            return 0;
+            var pages = book.Pages;
+            if (page.Index < 0 || page.Index >= pages.Count || pages[page.Index] != page) return false;
+
+            return !PageLockTools.HasUnlockedPageExcept(page.Index, pages.Count, i => IsPageLocked(pages[i]));
         }
 
         /// <summary>
